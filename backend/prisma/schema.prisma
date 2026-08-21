@@ -24,28 +24,66 @@ model User {
   updatedAt DateTime @updatedAt
 }
 
+model Group {
+  id     Int     @id @default(autoincrement())
+  name   String  @unique
+  active Boolean @default(true)
+
+  roles       Role[]
+  permissions GroupPermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model Role {
-  id    Int    @id @default(autoincrement())
-  name  String @unique
-  level Int
+  id       Int     @id @default(autoincrement())
+  name     String  @unique
+  level    Int
+  isAdmin  Boolean @default(false)
+  active   Boolean @default(true)
+
+  groupId Int?
+  group   Group? @relation(fields: [groupId], references: [id])
 
   users       User[]
   permissions RolePermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 }
 
 model Permission {
   id   Int    @id @default(autoincrement())
   name String @unique
 
-  roles RolePermission[]
+  parentId Int?
+  parent   Permission?  @relation("PermissionHierarchy", fields: [parentId], references: [id])
+  children Permission[] @relation("PermissionHierarchy")
+
+  groups GroupPermission[]
+  roles  RolePermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+}
+
+model GroupPermission {
+  groupId      Int
+  permissionId Int
+
+  group      Group      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, permissionId])
 }
 
 model RolePermission {
   roleId       Int
   permissionId Int
 
-  role       Role       @relation(fields: [roleId], references: [id])
-  permission Permission @relation(fields: [permissionId], references: [id])
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
   @@id([roleId, permissionId])
 }

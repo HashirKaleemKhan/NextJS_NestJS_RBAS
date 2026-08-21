@@ -91,9 +91,23 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const permissions = user.role.permissions.map(
-  (rp) => rp.permission.name,
-);
+    if (!user.role.active) {
+  throw new UnauthorizedException(
+    'Your role is currently inactive. Please contact an administrator.',
+  );
+}
+
+    const permissions = user.role.isAdmin
+  ? (
+      await this.prisma.permission.findMany({
+        select: {
+          name: true,
+        },
+      })
+    ).map((permission) => permission.name)
+  : user.role.permissions.map(
+      (rp) => rp.permission.name,
+    );
 
 const payload = {
   sub: user.id,
@@ -101,6 +115,7 @@ const payload = {
   email: user.email,
   role: user.role.name,
   permissions,
+   isAdmin: user.role.isAdmin,
 };
 
 const token = await this.jwtService.signAsync(payload);
@@ -114,6 +129,7 @@ const token = await this.jwtService.signAsync(payload);
         email: user.email,
         role: user.role.name,
         permissions,
+        isAdmin: user.role.isAdmin,
       },
     };
   }

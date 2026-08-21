@@ -13,6 +13,18 @@ const links = [
     permission: "dashboard.view",
   },
   {
+  label: "Groups",
+  href: "/groups",
+  icon: "▣",
+  permission: "roles.manage",
+ },
+ {
+    label: "Roles",
+    href: "/roles",
+    icon: "◆",
+    permission: "roles.manage",
+  },
+  {
     label: "Users",
     href: "/users",
     icon: "◉",
@@ -23,12 +35,6 @@ const links = [
     href: "/hierarchy",
     icon: "⌘",
     permission: "users.read",
-  },
-  {
-    label: "Roles",
-    href: "/roles",
-    icon: "◆",
-    permission: "roles.manage",
   },
 ];
 

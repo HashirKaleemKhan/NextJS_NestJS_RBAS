@@ -4,6 +4,7 @@ import { useState } from "react";
 import { api } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { getUser } from "@/lib/auth";
+import axios from "axios";
 export default function LoginForm() {
   const router = useRouter();
 
@@ -26,7 +27,7 @@ export default function LoginForm() {
 
       const user = getUser();
 
-const permissions: string[] =
+const permissions =
   user?.permissions || [];
 
 if (permissions.includes("dashboard.view")) {
@@ -42,9 +43,17 @@ if (permissions.includes("dashboard.view")) {
 } else {
   router.push("/access-denied");
 }
-    } catch {
-      alert("Invalid credentials");
-    } finally {
+    } catch (error) {
+  if (axios.isAxiosError(error)) {
+    const message =
+      error.response?.data?.message ||
+      "Unable to sign in.";
+
+    alert(message);
+  } else {
+    alert("Unable to sign in.");
+  }
+} finally {
       setLoading(false);
     }
   }

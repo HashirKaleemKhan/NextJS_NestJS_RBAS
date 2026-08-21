@@ -1,14 +1,27 @@
-import { jwtDecode } from "jwt-decode";
+import { jwtDecode, JwtPayload } from "jwt-decode";
 
-export function getUser() {
-  if (typeof window === "undefined") return null;
+type AppUser = JwtPayload & {
+  sub: number;
+  name: string;
+  email: string;
+  role: string;
+  permissions: string[];
+  isAdmin: boolean;
+};
+
+export function getUser(): AppUser | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
 
   const token = localStorage.getItem("token");
 
-  if (!token) return null;
+  if (!token) {
+    return null;
+  }
 
   try {
-    return jwtDecode(token);
+    return jwtDecode<AppUser>(token);
   } catch {
     return null;
   }
@@ -20,9 +33,9 @@ export function logout() {
 }
 
 export function getFirstAllowedRoute() {
-  const user: any = getUser();
+  const user = getUser();
 
-  const permissions: string[] =
+  const permissions =
     user?.permissions || [];
 
   if (permissions.includes("dashboard.view")) {
