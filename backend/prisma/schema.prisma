@@ -39,12 +39,15 @@ model Group {
 model Role {
   id       Int     @id @default(autoincrement())
   name     String  @unique
-  level    Int
   isAdmin  Boolean @default(false)
   active   Boolean @default(true)
 
   groupId Int?
   group   Group? @relation(fields: [groupId], references: [id])
+
+  reportsToRoleId Int?
+  reportsToRole   Role?  @relation("RoleHierarchy", fields: [reportsToRoleId], references: [id], onDelete: SetNull)
+  subordinateRoles Role[] @relation("RoleHierarchy")
 
   users       User[]
   permissions RolePermission[]

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { api } from "@/lib/api";
+import {logout } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 
 type HierarchyNode = {
@@ -14,7 +15,7 @@ type HierarchyNode = {
   role: {
     id: number;
     name: string;
-    level: number;
+    isAdmin: boolean;
   };
 
   managerId: number | null;
@@ -188,6 +189,12 @@ export default function HierarchyPage() {
           >
             ← Back to Dashboard
           </button>
+          <button
+                      className="button button-secondary"
+                      onClick={logout}
+                    >
+                      Logout
+                    </button>
 
         </div>
 
@@ -228,16 +235,20 @@ export default function HierarchyPage() {
             /*
              * Non-admin view
              */
-            <div className="hierarchy-tree">
+            <div className="hierarchy-tree-scroll">
 
-              {data.hierarchy.map(
-                (node) => (
-                  <HierarchyBranch
-                    key={node.id}
-                    node={node}
-                  />
-                ),
-              )}
+              <div className="hierarchy-tree">
+
+                {data.hierarchy.map(
+                  (node) => (
+                    <HierarchyBranch
+                      key={node.id}
+                      node={node}
+                    />
+                  ),
+                )}
+
+              </div>
 
             </div>
           )}
@@ -269,7 +280,7 @@ function AdminHierarchy({
    * at the top.
    */
   const admins = hierarchy.filter(
-    (node) => node.role.level === 4,
+    (node) => node.role.isAdmin,
   );
 
   /*

@@ -51,32 +51,90 @@ export class RolesService {
   // -----------------------------------
 
   async findAll(
-  currentUserId: number,
-) {
-  await this.verifyAdmin(
-    currentUserId,
-  );
+    currentUserId: number,
+  ) {
+    await this.verifyAdmin(
+      currentUserId,
+    );
 
-  return this.prisma.role.findMany({
-    include: {
-      group: true,
+    return this.prisma.role.findMany({
+      include: {
+        group: true,
 
-      users: true,
+        reportsToRole: true,
 
-      permissions: {
-        include: {
-          permission: true,
+        subordinateRoles: true,
+
+        users: true,
+
+        permissions: {
+          include: {
+            permission: true,
+          },
         },
       },
-    },
 
-    orderBy: {
-      level: "asc",
-    },
-  });
+      orderBy: {
+        name: "asc",
+      },
+    });
+  }
+
+  // -----------------------------------
+// GET ONE ROLE
+// -----------------------------------
+
+async findOne(
+  roleId: number,
+  currentUserId: number,
+) {
+  await this.verifyAdmin(currentUserId);
+
+  const role =
+    await this.prisma.role.findUnique({
+      where: {
+        id: roleId,
+      },
+
+      include: {
+        group: true,
+
+        reportsToRole: true,
+
+        subordinateRoles: true,
+
+        users: {
+          include: {
+            manager: {
+              select: {
+                id: true,
+                name: true,
+                roleId: true,
+              },
+            },
+
+            role: true,
+          },
+        },
+
+        permissions: {
+          include: {
+            permission: true,
+          },
+        },
+      },
+    });
+
+  if (!role) {
+    throw new NotFoundException(
+      "Role not found",
+    );
+  }
+
+  return role;
 }
 
-    // -----------------------------------
+  // -----------------------------------
   // CREATE ROLE
   // -----------------------------------
 
@@ -89,40 +147,40 @@ export class RolesService {
     );
 
     // -----------------------------------
-// CHECK GROUP
-// -----------------------------------
+    // CHECK GROUP
+    // -----------------------------------
 
-const group = dto.groupId
-  ? await this.prisma.group.findUnique({
-      where: {
-        id: dto.groupId,
-      },
+    const group = dto.groupId
+      ? await this.prisma.group.findUnique({
+          where: {
+            id: dto.groupId,
+          },
 
-      include: {
-        permissions: {
           include: {
-            permission: {
+            permissions: {
               include: {
-                children: true,
+                permission: {
+                  include: {
+                    children: true,
+                  },
+                },
               },
             },
           },
-        },
-      },
-    })
-  : null;
+        })
+      : null;
 
-if (dto.groupId && !group) {
-  throw new NotFoundException(
-    "Group not found",
-  );
-}
+    if (dto.groupId && !group) {
+      throw new NotFoundException(
+        "Group not found",
+      );
+    }
 
-if (group && !group.active) {
-  throw new ForbiddenException(
-    "Cannot assign an inactive group",
-  );
-}
+    if (group && !group.active) {
+      throw new ForbiddenException(
+        "Cannot assign an inactive group",
+      );
+    }
 
     // -----------------------------------
     // CHECK ROLE NAME
@@ -139,6 +197,51 @@ if (group && !group.active) {
       throw new ForbiddenException(
         "Role already exists",
       );
+    }
+
+    // -----------------------------------
+    // CHECK REPORTING ROLE
+    // -----------------------------------
+
+    let reportsToRoleId =
+      dto.reportsToRoleId ?? null;
+
+    /*
+     * Administrator roles are the top
+     * of the hierarchy and therefore do
+     * not report to another role.
+     */
+    if (dto.isAdmin === true) {
+      reportsToRoleId = null;
+    } else {
+      /*
+       * Every normal role must have a
+       * reporting role.
+       */
+      if (reportsToRoleId === null) {
+        throw new ForbiddenException(
+          "A non-administrator role must report to another role",
+        );
+      }
+
+      const reportsToRole =
+        await this.prisma.role.findUnique({
+          where: {
+            id: reportsToRoleId,
+          },
+        });
+
+      if (!reportsToRole) {
+        throw new NotFoundException(
+          "Reporting role not found",
+        );
+      }
+
+      if (!reportsToRole.active) {
+        throw new ForbiddenException(
+          "Cannot report to an inactive role",
+        );
+      }
     }
 
     // -----------------------------------
@@ -195,17 +298,10 @@ if (group && !group.active) {
         data: {
           name: dto.name,
 
-          /*
-           * Keep the existing level field
-           * temporarily for compatibility.
-           *
-           * New dynamic roles are not dependent
-           * on this value.
-           */
-          level: 1,
-
-          groupId:
+          groupId:  
             dto.groupId ?? null,
+
+          reportsToRoleId,
 
           active:
             dto.active ?? true,
@@ -245,6 +341,10 @@ if (group && !group.active) {
       include: {
         group: true,
 
+        reportsToRole: true,
+
+        subordinateRoles: true,
+
         users: true,
 
         permissions: {
@@ -256,7 +356,7 @@ if (group && !group.active) {
     });
   }
 
-// -----------------------------------
+  // -----------------------------------
 // UPDATE ROLE
 // -----------------------------------
 
@@ -265,7 +365,9 @@ async update(
   dto: UpdateRoleDto,
   currentUserId: number,
 ) {
-  await this.verifyAdmin(currentUserId);
+  await this.verifyAdmin(
+    currentUserId,
+  );
 
   // -----------------------------------
   // FIND ROLE
@@ -276,9 +378,10 @@ async update(
       where: {
         id: roleId,
       },
+
       include: {
-      users: true,
-    },
+        users: true,
+      },
     });
 
   if (!role) {
@@ -287,17 +390,22 @@ async update(
     );
   }
 
+  // -----------------------------------
+  // PROTECT OWN ADMIN ACCESS
+  // -----------------------------------
+
   if (
-  role.isAdmin &&
-  role.users.some(
-    (user) => user.id === currentUserId,
-  ) &&
-  dto.isAdmin === false
-) {
-  throw new ForbiddenException(
-    "You cannot remove administrator access from your own account",
-  );
-}
+    role.isAdmin &&
+    role.users.some(
+      (user) =>
+        user.id === currentUserId,
+    ) &&
+    dto.isAdmin === false
+  ) {
+    throw new ForbiddenException(
+      "You cannot remove administrator access from your own account",
+    );
+  }
 
   // -----------------------------------
   // CHECK ROLE NAME
@@ -308,6 +416,7 @@ async update(
       await this.prisma.role.findFirst({
         where: {
           name: dto.name,
+
           NOT: {
             id: roleId,
           },
@@ -322,51 +431,51 @@ async update(
   }
 
   // -----------------------------------
-// CHECK GROUP
-// -----------------------------------
+  // CHECK GROUP
+  // -----------------------------------
 
-const targetGroupId =
-  dto.groupId !== undefined
-    ? dto.groupId
-    : role.groupId;
+  const targetGroupId =
+    dto.groupId !== undefined
+      ? dto.groupId
+      : role.groupId;
 
-const group =
-  targetGroupId !== null &&
-  targetGroupId !== undefined
-    ? await this.prisma.group.findUnique({
-        where: {
-          id: targetGroupId,
-        },
+  const group =
+    targetGroupId !== null &&
+    targetGroupId !== undefined
+      ? await this.prisma.group.findUnique({
+          where: {
+            id: targetGroupId,
+          },
 
-        include: {
-          permissions: {
-            include: {
-              permission: {
-                include: {
-                  children: true,
+          include: {
+            permissions: {
+              include: {
+                permission: {
+                  include: {
+                    children: true,
+                  },
                 },
               },
             },
           },
-        },
-      })
-    : null;
+        })
+      : null;
 
-if (
-  targetGroupId !== null &&
-  targetGroupId !== undefined &&
-  !group
-) {
-  throw new NotFoundException(
-    "Group not found",
-  );
-}
+  if (
+    targetGroupId !== null &&
+    targetGroupId !== undefined &&
+    !group
+  ) {
+    throw new NotFoundException(
+      "Group not found",
+    );
+  }
 
-if (group && !group.active) {
-  throw new ForbiddenException(
-    "Cannot assign an inactive group",
-  );
-}
+  if (group && !group.active) {
+    throw new ForbiddenException(
+      "Cannot assign an inactive group",
+    );
+  }
 
   // -----------------------------------
   // VALIDATE CHILD PERMISSIONS
@@ -408,85 +517,231 @@ if (group && !group.active) {
   }
 
   // -----------------------------------
-// UPDATE ROLE DETAILS
-// -----------------------------------
+  // DETERMINE ADMIN STATUS
+  // -----------------------------------
 
-const targetIsAdmin =
-  dto.isAdmin !== undefined
-    ? dto.isAdmin
-    : role.isAdmin;
-
-if (
-  targetIsAdmin &&
-  dto.active === false
-) {
-  throw new ForbiddenException(
-    "Administrator roles must remain active",
-  );
-}
-
-await this.prisma.role.update({
-  where: {
-    id: roleId,
-  },
-
-  data: {
-    ...(dto.name !== undefined && {
-      name: dto.name,
-    }),
-
-    ...(dto.level !== undefined && {
-      level: dto.level,
-    }),
-
-    ...(dto.active !== undefined && {
-      active: dto.active,
-    }),
-
-    ...(dto.isAdmin !== undefined && {
-      isAdmin: dto.isAdmin,
-    }),
-
-    ...(targetIsAdmin
-      ? {
-          groupId: null,
-        }
-      : dto.groupId !== undefined
-        ? {
-            groupId: dto.groupId,
-          }
-        : {}),
-  },
-});
+  const targetIsAdmin =
+    dto.isAdmin !== undefined
+      ? dto.isAdmin
+      : role.isAdmin;
 
   // -----------------------------------
-// UPDATE PERMISSIONS
-// -----------------------------------
+  // CHECK ADMIN ACTIVE STATUS
+  // -----------------------------------
 
-if (targetIsAdmin) {
-  await this.prisma.rolePermission.deleteMany({
-    where: {
-      roleId,
-    },
-  });
-} else if (dto.permissionIds !== undefined) {
-  await this.prisma.rolePermission.deleteMany({
-    where: {
-      roleId,
-    },
-  });
-
-  if (dto.permissionIds.length > 0) {
-    await this.prisma.rolePermission.createMany({
-      data: dto.permissionIds.map(
-        (permissionId) => ({
-          roleId,
-          permissionId,
-        }),
-      ),
-    });
+  if (
+    targetIsAdmin &&
+    dto.active === false
+  ) {
+    throw new ForbiddenException(
+      "Administrator roles must remain active",
+    );
   }
-}
+
+  // -----------------------------------
+  // CHECK REPORTING ROLE
+  // -----------------------------------
+
+  const oldReportsToRoleId =
+    role.reportsToRoleId;
+
+  let reportsToRoleId =
+    dto.reportsToRoleId !== undefined
+      ? dto.reportsToRoleId
+      : role.reportsToRoleId;
+
+  /*
+   * Administrator roles cannot report
+   * to another role.
+   */
+  if (targetIsAdmin) {
+    reportsToRoleId = null;
+  } else {
+    /*
+     * Normal roles must have a
+     * reporting role.
+     */
+    if (reportsToRoleId === null) {
+      throw new ForbiddenException(
+        "A non-administrator role must report to another role",
+      );
+    }
+
+    /*
+     * A role cannot report to itself.
+     */
+    if (
+      reportsToRoleId === roleId
+    ) {
+      throw new ForbiddenException(
+        "A role cannot report to itself",
+      );
+    }
+
+    const reportsToRole =
+      await this.prisma.role.findUnique({
+        where: {
+          id: reportsToRoleId,
+        },
+      });
+
+    if (!reportsToRole) {
+      throw new NotFoundException(
+        "Reporting role not found",
+      );
+    }
+
+    if (!reportsToRole.active) {
+      throw new ForbiddenException(
+        "Cannot report to an inactive role",
+      );
+    }
+  }
+
+  // -----------------------------------
+  // UPDATE ROLE DETAILS
+  // -----------------------------------
+
+  await this.prisma.role.update({
+    where: {
+      id: roleId,
+    },
+
+    data: {
+      ...(dto.name !== undefined && {
+        name: dto.name,
+      }),
+
+      ...(dto.active !== undefined && {
+        active: dto.active,
+      }),
+
+      ...(dto.isAdmin !== undefined && {
+        isAdmin: dto.isAdmin,
+      }),
+
+      reportsToRoleId,
+
+      /*
+       * Administrator roles do not
+       * belong to groups.
+       */
+      ...(targetIsAdmin
+        ? {
+            groupId: null,
+          }
+        : dto.groupId !== undefined
+          ? {
+              groupId: dto.groupId,
+            }
+          : {}),
+    },
+  });
+
+  // -----------------------------------
+  // CLEAN UP INVALID USER MANAGERS
+  // -----------------------------------
+
+  /*
+   * If this role's reporting role changed,
+   * existing users under this role may now
+   * have invalid managers.
+   *
+   * Example:
+   *
+   * Employee Role
+   * reportsToRole = Manager
+   *
+   * User:
+   * Employee 1 -> Manager A
+   *
+   * Change:
+   * Employee Role
+   * reportsToRole = CEO
+   *
+   * Manager A is no longer valid, so:
+   *
+   * Employee 1 -> null
+   */
+
+  if (
+    oldReportsToRoleId !==
+    reportsToRoleId
+  ) {
+    const affectedUsers =
+      await this.prisma.user.findMany({
+        where: {
+          roleId,
+
+          managerId: {
+            not: null,
+          },
+        },
+
+        include: {
+          manager: {
+            select: {
+              roleId: true,
+            },
+          },
+        },
+      });
+
+    for (const user of affectedUsers) {
+      /*
+       * The user's manager must have the
+       * newly selected reporting role.
+       *
+       * If not, remove the manager.
+       */
+      if (
+        !user.manager ||
+        user.manager.roleId !==
+          reportsToRoleId
+      ) {
+        await this.prisma.user.update({
+          where: {
+            id: user.id,
+          },
+
+          data: {
+            managerId: null,
+          },
+        });
+      }
+    }
+  }
+
+  // -----------------------------------
+  // UPDATE PERMISSIONS
+  // -----------------------------------
+
+  if (targetIsAdmin) {
+    await this.prisma.rolePermission.deleteMany({
+      where: {
+        roleId,
+      },
+    });
+  } else if (
+    dto.permissionIds !== undefined
+  ) {
+    await this.prisma.rolePermission.deleteMany({
+      where: {
+        roleId,
+      },
+    });
+
+    if (dto.permissionIds.length > 0) {
+      await this.prisma.rolePermission.createMany({
+        data: dto.permissionIds.map(
+          (permissionId) => ({
+            roleId,
+            permissionId,
+          }),
+        ),
+      });
+    }
+  }
 
   // -----------------------------------
   // RETURN UPDATED ROLE
@@ -500,7 +755,23 @@ if (targetIsAdmin) {
     include: {
       group: true,
 
-      users: true,
+      reportsToRole: true,
+
+      subordinateRoles: true,
+
+      users: {
+        include: {
+          manager: {
+            select: {
+              id: true,
+              name: true,
+              roleId: true,
+            },
+          },
+
+          role: true,
+        },
+      },
 
       permissions: {
         include: {
@@ -511,171 +782,146 @@ if (targetIsAdmin) {
   });
 }
 
-// -----------------------------------
-// TOGGLE ROLE STATUS
-// -----------------------------------
+  // -----------------------------------
+  // TOGGLE ROLE STATUS
+  // -----------------------------------
 
-async toggleStatus(
-  roleId: number,
-  currentUserId: number,
-) {
-  await this.verifyAdmin(currentUserId);
-
-  const role =
-    await this.prisma.role.findUnique({
-      where: {
-        id: roleId,
-      },
-    });
-
-  if (!role) {
-    throw new NotFoundException(
-      "Role not found",
+  async toggleStatus(
+    roleId: number,
+    currentUserId: number,
+  ) {
+    await this.verifyAdmin(
+      currentUserId,
     );
-  }
 
-  if (role.isAdmin) {
-  throw new ForbiddenException(
-    "Administrator roles cannot be deactivated",
-  );
-}
-  return this.prisma.role.update({
-    where: {
-      id: roleId,
-    },
-
-    data: {
-      active: !role.active,
-    },
-
-    include: {
-      group: true,
-
-      users: true,
-
-      permissions: {
-        include: {
-          permission: true,
+    const role =
+      await this.prisma.role.findUnique({
+        where: {
+          id: roleId,
         },
-      },
-    },
-  });
-}
+      });
 
-// -----------------------------------
-// DELETE ROLE
-// -----------------------------------
+    if (!role) {
+      throw new NotFoundException(
+        "Role not found",
+      );
+    }
 
-async remove(
-  roleId: number,
-  currentUserId: number,
-) {
-  await this.verifyAdmin(
-    currentUserId,
-  );
+    if (role.isAdmin) {
+      throw new ForbiddenException(
+        "Administrator roles cannot be deactivated",
+      );
+    }
 
-  const role =
-    await this.prisma.role.findUnique({
+    return this.prisma.role.update({
       where: {
         id: roleId,
+      },
+
+      data: {
+        active: !role.active,
       },
 
       include: {
+        group: true,
+
+        reportsToRole: true,
+
+        subordinateRoles: true,
+
         users: true,
+
+        permissions: {
+          include: {
+            permission: true,
+          },
+        },
       },
     });
-
-  if (!role) {
-    throw new NotFoundException(
-      "Role not found",
-    );
-  }
-
-  // -----------------------------------
-  // PROTECT ADMIN ROLES
-  // -----------------------------------
-
-  if (role.isAdmin) {
-    throw new ForbiddenException(
-      "Administrator roles cannot be deleted",
-    );
-  }
-
-  // -----------------------------------
-  // PROTECT ROLES WITH USERS
-  // -----------------------------------
-
-  if (role.users.length > 0) {
-    throw new ForbiddenException(
-      "Cannot delete a role that has users assigned to it",
-    );
   }
 
   // -----------------------------------
   // DELETE ROLE
   // -----------------------------------
 
-  await this.prisma.role.delete({
-    where: {
-      id: roleId,
-    },
-  });
+  async remove(
+    roleId: number,
+    currentUserId: number,
+  ) {
+    await this.verifyAdmin(
+      currentUserId,
+    );
 
-  return {
-    message: "Role deleted successfully",
-  };
-}
-
-// -----------------------------------
-// GET ACTIVE GROUPS
-// -----------------------------------
-
-async findGroups(
-  currentUserId: number,
-) {
-  await this.verifyAdmin(
-    currentUserId,
-  );
-
-  return this.prisma.group.findMany({
-    where: {
-      active: true,
-    },
-
-    orderBy: {
-      name: "asc",
-    },
-
-    include: {
-      permissions: {
-        include: {
-          permission: {
-            include: {
-              children: true,
-            },
-          },
+    const role =
+      await this.prisma.role.findUnique({
+        where: {
+          id: roleId,
         },
-      },
-    },
-  });
-}
 
-// -----------------------------------
-// GET CHILD PERMISSIONS FOR GROUP
-// -----------------------------------
+        include: {
+          users: true,
+        },
+      });
 
-async findGroupPermissions(
-  groupId: number,
-  currentUserId: number,
-) {
-  await this.verifyAdmin(
-    currentUserId,
-  );
+    if (!role) {
+      throw new NotFoundException(
+        "Role not found",
+      );
+    }
 
-  const group =
-    await this.prisma.group.findUnique({
+    // -----------------------------------
+    // PROTECT ADMIN ROLES
+    // -----------------------------------
+
+    if (role.isAdmin) {
+      throw new ForbiddenException(
+        "Administrator roles cannot be deleted",
+      );
+    }
+
+    // -----------------------------------
+    // PROTECT ROLES WITH USERS
+    // -----------------------------------
+
+    if (role.users.length > 0) {
+      throw new ForbiddenException(
+        "Cannot delete a role that has users assigned to it",
+      );
+    }
+
+    // -----------------------------------
+    // DELETE ROLE
+    // -----------------------------------
+
+    await this.prisma.role.delete({
       where: {
-        id: groupId,
+        id: roleId,
+      },
+    });
+
+    return {
+      message: "Role deleted successfully",
+    };
+  }
+
+  // -----------------------------------
+  // GET ACTIVE GROUPS
+  // -----------------------------------
+
+  async findGroups(
+    currentUserId: number,
+  ) {
+    await this.verifyAdmin(
+      currentUserId,
+    );
+
+    return this.prisma.group.findMany({
+      where: {
+        active: true,
+      },
+
+      orderBy: {
+        name: "asc",
       },
 
       include: {
@@ -690,26 +936,58 @@ async findGroupPermissions(
         },
       },
     });
-
-  if (!group) {
-    throw new NotFoundException(
-      "Group not found",
-    );
   }
 
-  return group.permissions.map(
-    (groupPermission) => ({
-      id:
-        groupPermission.permission.id,
+  // -----------------------------------
+  // GET CHILD PERMISSIONS FOR GROUP
+  // -----------------------------------
 
-      name:
-        groupPermission.permission.name,
+  async findGroupPermissions(
+    groupId: number,
+    currentUserId: number,
+  ) {
+    await this.verifyAdmin(
+      currentUserId,
+    );
 
-      children:
-        groupPermission.permission.children,
-    }),
-  );
-}
+    const group =
+      await this.prisma.group.findUnique({
+        where: {
+          id: groupId,
+        },
+
+        include: {
+          permissions: {
+            include: {
+              permission: {
+                include: {
+                  children: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+    if (!group) {
+      throw new NotFoundException(
+        "Group not found",
+      );
+    }
+
+    return group.permissions.map(
+      (groupPermission) => ({
+        id:
+          groupPermission.permission.id,
+
+        name:
+          groupPermission.permission.name,
+
+        children:
+          groupPermission.permission.children,
+      }),
+    );
+  }
 
   // -----------------------------------
   // UPDATE ROLE PERMISSIONS
@@ -797,6 +1075,12 @@ async findGroupPermissions(
       },
 
       include: {
+        group: true,
+
+        reportsToRole: true,
+
+        subordinateRoles: true,
+
         users: true,
 
         permissions: {

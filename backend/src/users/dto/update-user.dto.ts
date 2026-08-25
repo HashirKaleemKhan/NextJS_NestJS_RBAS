@@ -11,5 +11,5 @@ export class UpdateUserDto extends PartialType(
 ) {
   @IsOptional()
   @IsInt()
-  managerId?: number;
+  managerId?: number | null;
 }

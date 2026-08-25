@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { getUser, logout } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
+import "../roles/roles.css";
 
 type User = {
   id: number;
@@ -15,23 +16,13 @@ type User = {
   role?: {
     name: string;
     level?: number;
+    active: boolean;
   };
 
   manager?: {
     id: number;
     name: string;
   } | null;
-};
-
-type PossibleManager = {
-  id: number;
-  name: string;
-  email: string;
-
-  role?: {
-    name: string;
-    level: number;
-  };
 };
 
 type CurrentUser = {
@@ -56,75 +47,38 @@ export default function UsersPage() {
   const [search, setSearch] = useState("");
 
   // -----------------------------------
-  // EDIT USER
-  // -----------------------------------
-
-  const [editingUser, setEditingUser] =
-    useState<User | null>(null);
-
-  const [editName, setEditName] =
-    useState("");
-
-  const [editEmail, setEditEmail] =
-    useState("");
-
-  const [editPassword, setEditPassword] =
-    useState("");
-
-  const [editManagerId, setEditManagerId] =
-    useState<string>("");
-
-  const [possibleManagers, setPossibleManagers] =
-    useState<PossibleManager[]>([]);
-
-  const [loadingManagers, setLoadingManagers] =
-    useState(false);
-
-  const [savingEdit, setSavingEdit] =
-    useState(false);
-
-  // -----------------------------------
   // LOAD USERS
   // -----------------------------------
 
   useEffect(() => {
-    const token =
-      localStorage.getItem("token");
+    const token = localStorage.getItem("token");
 
     if (!token) {
       router.replace("/login");
       return;
     }
 
-    const user =
-      getUser() as CurrentUser | null;
+    const user = getUser() as CurrentUser | null;
 
     setCurrentUser(user);
 
     async function loadUsers() {
       try {
-        const response =
-          await api.get("/users");
+        const response = await api.get("/users");
 
         setUsers(response.data);
       } catch (err: any) {
-        if (
-          err?.response?.status === 401
-        ) {
+        if (err?.response?.status === 401) {
           router.replace("/login");
           return;
         }
 
-        if (
-          err?.response?.status === 403
-        ) {
+        if (err?.response?.status === 403) {
           router.replace("/dashboard");
           return;
         }
 
-        setError(
-          "Unable to load users.",
-        );
+        setError("Unable to load users.");
       } finally {
         setLoading(false);
       }
@@ -141,47 +95,49 @@ export default function UsersPage() {
     currentUser?.permissions || [];
 
   const canCreateUsers =
-    userPermissions.includes(
-      "users.create",
-    );
+    userPermissions.includes("users.create");
 
   const canUpdateUsers =
-    userPermissions.includes(
-      "users.update",
-    );
+    userPermissions.includes("users.update");
 
   const canDeleteUsers =
-    userPermissions.includes(
-      "users.delete",
-    );
+    userPermissions.includes("users.delete");
+
+  // -----------------------------------
+  // STATISTICS
+  // -----------------------------------
+
+  const totalUsers = users.length;
+
+  const activeUsers = users.filter(
+    (user) => user.role?.active === true,
+  ).length;
+
+  const inactiveUsers = users.filter(
+    (user) => user.role?.active !== true,
+  ).length;
 
   // -----------------------------------
   // DELETE USER
   // -----------------------------------
 
-  async function deleteUser(
-    user: User,
-  ) {
-    const confirmed =
-      window.confirm(
-        `Are you sure you want to delete ${user.name}?`,
-      );
+  async function deleteUser(user: User) {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${user.name}?`,
+    );
 
     if (!confirmed) {
       return;
     }
 
     try {
-      await api.delete(
-        `/users/${user.id}`,
-      );
+      await api.delete(`/users/${user.id}`);
 
-      setUsers(
-        (currentUsers) =>
-          currentUsers.filter(
-            (currentUser) =>
-              currentUser.id !== user.id,
-          ),
+      setUsers((currentUsers) =>
+        currentUsers.filter(
+          (currentUser) =>
+            currentUser.id !== user.id,
+        ),
       );
     } catch (err: any) {
       alert(
@@ -192,187 +148,41 @@ export default function UsersPage() {
   }
 
   // -----------------------------------
-  // OPEN EDIT
+  // EDIT USER
   // -----------------------------------
 
-  async function openEditUser(
-    user: User,
-  ) {
-    setEditingUser(user);
-
-    setEditName(user.name);
-
-    setEditEmail(user.email);
-
-    setEditPassword("");
-
-    setEditManagerId(
-      user.manager
-        ? String(user.manager.id)
-        : "",
-    );
-
-    setPossibleManagers([]);
-
-    /*
-     * Load valid managers only if the
-     * current user has update permission.
-     */
-    if (!canUpdateUsers) {
-      return;
-    }
-
-    setLoadingManagers(true);
-
-    try {
-      const response =
-        await api.get(
-          `/users/${user.id}/possible-managers`,
-        );
-
-      setPossibleManagers(
-        response.data,
-      );
-    } catch (err: any) {
-      console.error(
-        "Unable to load possible managers:",
-        err,
-      );
-
-      /*
-       * We don't close the modal.
-       * The user can still edit the
-       * normal account information.
-       */
-    } finally {
-      setLoadingManagers(false);
-    }
+  function editUser(user: User) {
+    router.push(`/users/${user.id}/edit`);
   }
-
-  // -----------------------------------
-  // CLOSE EDIT
-  // -----------------------------------
-
-  function closeEditUser() {
-    if (savingEdit) {
-      return;
-    }
-
-    setEditingUser(null);
-
-    setEditName("");
-
-    setEditEmail("");
-
-    setEditPassword("");
-
-    setEditManagerId("");
-
-    setPossibleManagers([]);
-  }
-
-  // -----------------------------------
-  // SAVE EDIT
-  // -----------------------------------
-
-  async function saveEditUser() {
-  if (!editingUser) {
-    return;
-  }
-
-  if (!editName.trim()) {
-    alert("Name is required.");
-    return;
-  }
-
-  if (!editEmail.trim()) {
-    alert("Email is required.");
-    return;
-  }
-
-  setSavingEdit(true);
-
-  try {
-    const data: {
-      name: string;
-      email: string;
-      password?: string;
-      managerId?: number;
-    } = {
-      name: editName.trim(),
-      email: editEmail.trim(),
-    };
-
-    if (editPassword.trim()) {
-      data.password = editPassword;
-    }
-
-    /*
-     * Only send managerId when an actual
-     * manager has been selected.
-     */
-    if (canUpdateUsers && editManagerId) {
-      data.managerId = Number(editManagerId);
-    }
-
-    const response = await api.patch(
-      `/users/${editingUser.id}`,
-      data,
-    );
-
-    setUsers((currentUsers) =>
-      currentUsers.map((user) =>
-        user.id === editingUser.id
-          ? {
-              ...user,
-              ...response.data,
-            }
-          : user,
-      ),
-    );
-
-    closeEditUser();
-  } catch (err: any) {
-    alert(
-      err?.response?.data?.message ||
-        "Unable to update user.",
-    );
-  } finally {
-    setSavingEdit(false);
-  }
-}
 
   // -----------------------------------
   // SEARCH
   // -----------------------------------
 
-  const filteredUsers =
-    useMemo(() => {
-      const query =
-        search
-          .toLowerCase()
-          .trim();
+  const filteredUsers = useMemo(() => {
+    const query = search
+      .toLowerCase()
+      .trim();
 
-      if (!query) {
-        return users;
-      }
+    if (!query) {
+      return users;
+    }
 
-      return users.filter(
-        (user) =>
-          user.name
-            .toLowerCase()
-            .includes(query) ||
-          user.email
-            .toLowerCase()
-            .includes(query) ||
-          user.role?.name
-            .toLowerCase()
-            .includes(query) ||
-          user.manager?.name
+    return users.filter((user) =>
+      [
+        user.name,
+        user.email,
+        user.role?.name,
+        user.manager?.name,
+      ]
+        .filter(Boolean)
+        .some((value) =>
+          value!
             .toLowerCase()
             .includes(query),
-      );
-    }, [users, search]);
+        ),
+    );
+  }, [users, search]);
 
   // -----------------------------------
   // LOADING
@@ -413,9 +223,7 @@ export default function UsersPage() {
             <button
               className="button button-primary"
               onClick={() =>
-                router.push(
-                  "/users/create",
-                )
+                router.push("/users/create")
               }
             >
               Create user
@@ -436,6 +244,70 @@ export default function UsersPage() {
           {error}
         </div>
       )}
+
+      {/* -------------------------------- */}
+      {/* USER STATISTICS */}
+      {/* -------------------------------- */}
+
+      <div className="stats-grid">
+        {/* TOTAL */}
+
+        <div className="stat-card stat-card-total">
+            <div className="stat-card-content">
+              <span className="stat-card-label">
+                Total Users
+              </span>
+
+              <strong className="stat-card-value">
+                {totalUsers}
+              </strong>
+
+              <span className="stat-card-description">
+                Users in your management scope
+              </span>
+            </div>
+          </div>
+
+        {/* ACTIVE */}
+
+          <div className="stat-card stat-card-active">
+            <div className="stat-card-content">
+              <span className="stat-card-label">
+                Active
+              </span>
+
+              <strong className="stat-card-value">
+                {activeUsers}
+              </strong>
+
+              <span className="stat-card-description">
+                Active Users
+              </span>
+            </div>
+          </div>
+
+          {/* INACTIVE */}
+
+          <div className="stat-card stat-card-inactive">
+            <div className="stat-card-content">
+              <span className="stat-card-label">
+                Inactive
+              </span>
+
+              <strong className="stat-card-value">
+                {inactiveUsers}
+              </strong>
+
+              <span className="stat-card-description">
+                Disabled Users
+              </span>
+            </div>
+          </div>
+      </div>
+
+      {/* -------------------------------- */}
+      {/* USERS LIST */}
+      {/* -------------------------------- */}
 
       <div className="content-card users-card">
         <div className="users-toolbar">
@@ -461,13 +333,15 @@ export default function UsersPage() {
               placeholder="Search users..."
               value={search}
               onChange={(e) =>
-                setSearch(
-                  e.target.value,
-                )
+                setSearch(e.target.value)
               }
             />
           </div>
         </div>
+
+        {/* -------------------------------- */}
+        {/* EMPTY STATE */}
+        {/* -------------------------------- */}
 
         {filteredUsers.length === 0 ? (
           <div className="empty-state">
@@ -484,6 +358,10 @@ export default function UsersPage() {
             </p>
           </div>
         ) : (
+          /* -------------------------------- */
+          /* USERS TABLE */
+          /* -------------------------------- */
+
           <div className="table-wrapper">
             <table className="users-table">
               <thead>
@@ -506,342 +384,149 @@ export default function UsersPage() {
               </thead>
 
               <tbody>
-                {filteredUsers.map(
-                  (user) => (
-                    <tr
-                      key={user.id}
-                    >
-                      <td>
-                        <div className="user-cell">
-                          <div className="user-avatar">
-                            {user.name
-                              .charAt(
-                                0,
-                              )
-                              .toUpperCase()}
+                {filteredUsers.map((user) => (
+                  <tr key={user.id}>
+                    {/* USER */}
+
+                    <td>
+                      <div className="user-cell">
+                        <div className="user-avatar">
+                          {user.name
+                            .charAt(0)
+                            .toUpperCase()}
+                        </div>
+
+                        <div>
+                          <div className="user-name">
+                            {user.name}
                           </div>
 
-                          <div>
-                            <div className="user-name">
-                              {user.name}
-                            </div>
-
-                            <div className="user-id">
-                              ID #
-                              {user.id}
-                            </div>
+                          <div className="user-id">
+                            ID #{user.id}
                           </div>
                         </div>
-                      </td>
+                      </div>
+                    </td>
 
-                      <td>
-                        <span className="email-text">
-                          {user.email}
-                        </span>
-                      </td>
+                    {/* EMAIL */}
 
-                      <td>
-                        <span
-                          className={`role-badge role-${user.role?.name?.toLowerCase()}`}
-                        >
-                          {user.role
-                            ?.name ||
-                            "Developer"}
-                        </span>
-                      </td>
+                    <td>
+                      <span className="email-text">
+                        {user.email}
+                      </span>
+                    </td>
 
-                      <td>
-                        {user.manager ? (
-                          <div>
-                            <div className="user-name">
-                              {user
-                                .manager
-                                .name}
-                            </div>
+                    {/* ROLE */}
 
-                            <div className="user-id">
-                              ID #
-                              {
-                                user
-                                  .manager
-                                  .id
-                              }
-                            </div>
+                    <td>
+                      <span
+                        className={`role-badge role-${user.role?.name?.toLowerCase()}`}
+                      >
+                        {user.role?.name ||
+                          "Developer"}
+                      </span>
+                    </td>
+
+                    {/* REPORTS TO */}
+
+                    <td>
+                      {user.manager ? (
+                        <div>
+                          <div className="user-name">
+                            {
+                              user.manager
+                                .name
+                            }
                           </div>
-                        ) : (
-                          <span className="current-user-label">
-                            TOP LEVEL
-                          </span>
-                        )}
-                      </td>
 
-                      <td>
-                        <span className="status-badge">
+                          <div className="user-id">
+                            ID #
+                            {
+                              user.manager
+                                .id
+                            }
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="current-user-label">
+                          TOP LEVEL
+                        </span>
+                      )}
+                    </td>
+
+                    {/* STATUS */}
+
+                    <td>
+                      {user.role?.active ? (
+                        <span className="status-badge status-active">
                           <span className="status-dot" />
 
                           Active
                         </span>
-                      </td>
+                      ) : (
+                        <span className="status-badge status-inactive">
+                          <span className="status-dot" />
 
-                      {(canUpdateUsers ||
-                        canDeleteUsers) && (
-                        <td>
-                          <div className="user-actions">
-                            {canUpdateUsers &&
-  !(
-    currentUser?.role === "Admin" &&
-    user.role?.name === "Admin"
-  ) && (
-    <button
-      className="edit-button"
-      onClick={() => openEditUser(user)}
-    >
-      Edit
-    </button>
-  )}
-
-                            {canDeleteUsers &&
-  !(
-    currentUser?.role === "Admin" &&
-    user.role?.name === "Admin"
-  ) && (
-    <button
-      className="delete-button"
-      onClick={() => deleteUser(user)}
-    >
-      Delete
-    </button>
-  )}
-                          </div>
-                        </td>
+                          Inactive
+                        </span>
                       )}
-                    </tr>
-                  ),
-                )}
+                    </td>
+
+                    {/* ACTIONS */}
+
+                    {(canUpdateUsers ||
+                      canDeleteUsers) && (
+                      <td>
+                        <div className="user-actions">
+                          {/* EDIT */}
+
+                          {canUpdateUsers &&
+                            !(
+                              currentUser?.role ===
+                                "Admin" &&
+                              user.role?.name ===
+                                "Admin"
+                            ) && (
+                              <button
+                                className="edit-button"
+                                onClick={() =>
+                                  editUser(user)
+                                }
+                              >
+                                Edit
+                              </button>
+                            )}
+
+                          {/* DELETE */}
+
+                          {canDeleteUsers &&
+                            !(
+                              currentUser?.role ===
+                                "Admin" &&
+                              user.role?.name ===
+                                "Admin"
+                            ) && (
+                              <button
+                                className="delete-button"
+                                onClick={() =>
+                                  deleteUser(
+                                    user,
+                                  )
+                                }
+                              >
+                                Delete
+                              </button>
+                            )}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         )}
       </div>
-
-      {/* -------------------------------- */}
-      {/* EDIT MODAL */}
-      {/* -------------------------------- */}
-
-      {editingUser && (
-        <div className="modal-overlay">
-          <div className="edit-modal">
-            <div className="modal-header">
-              <div>
-                <h2>Edit user</h2>
-
-                <p>
-                  Update{" "}
-                  {
-                    editingUser.name
-                  }
-                  's account and
-                  hierarchy.
-                </p>
-              </div>
-
-              <button
-                className="modal-close"
-                onClick={
-                  closeEditUser
-                }
-                disabled={
-                  savingEdit
-                }
-              >
-                ×
-              </button>
-            </div>
-
-            {/* NAME */}
-
-            <div className="form-group">
-              <label htmlFor="edit-name">
-                Name
-              </label>
-
-              <input
-                id="edit-name"
-                className="form-input"
-                value={editName}
-                onChange={(e) =>
-                  setEditName(
-                    e.target.value,
-                  )
-                }
-              />
-            </div>
-
-            {/* EMAIL */}
-
-            <div className="form-group">
-              <label htmlFor="edit-email">
-                Email
-              </label>
-
-              <input
-                id="edit-email"
-                type="email"
-                className="form-input"
-                value={editEmail}
-                onChange={(e) =>
-                  setEditEmail(
-                    e.target.value,
-                  )
-                }
-              />
-            </div>
-
-            {/* PASSWORD */}
-
-            <div className="form-group">
-              <label htmlFor="edit-password">
-                New password
-              </label>
-
-              <input
-                id="edit-password"
-                type="password"
-                className="form-input"
-                placeholder="Leave blank to keep current password"
-                value={
-                  editPassword
-                }
-                onChange={(e) =>
-                  setEditPassword(
-                    e.target.value,
-                  )
-                }
-              />
-            </div>
-
-            {/* REPORTS TO */}
-
-{canUpdateUsers && (
-  <div className="form-group">
-    <label htmlFor="edit-manager">
-      Reports To
-    </label>
-
-    {loadingManagers ? (
-      <div className="form-input">
-        Loading managers...
-      </div>
-    ) : possibleManagers.length === 0 ? (
-      <div className="form-input">
-        No valid managers available.
-      </div>
-    ) : (
-      <select
-        id="edit-manager"
-        className="form-input"
-        value={editManagerId}
-        onChange={(e) =>
-          setEditManagerId(e.target.value)
-        }
-      >
-        {possibleManagers.map((manager) => (
-          <option
-            key={manager.id}
-            value={manager.id}
-          >
-            {manager.name} —{" "}
-            {manager.role?.name}
-          </option>
-        ))}
-      </select>
-    )}
-  </div>
-)}
-
-            {/* HIERARCHY INFO */}
-
-            <div
-              style={{
-                marginTop:
-                  "8px",
-                marginBottom:
-                  "20px",
-                padding:
-                  "12px 14px",
-                borderRadius:
-                  "8px",
-                background:
-                  "rgba(255,255,255,0.04)",
-                fontSize:
-                  "13px",
-              }}
-            >
-              <strong>
-                Current hierarchy
-              </strong>
-
-              <div
-                style={{
-                  marginTop:
-                    "6px",
-                }}
-              >
-                {editingUser.manager ? (
-                  <>
-                    {
-                      editingUser.name
-                    }{" "}
-                    →{" "}
-                    {
-                      editingUser
-                        .manager
-                        .name
-                    }
-                  </>
-                ) : (
-                  <>
-                    {
-                      editingUser.name
-                    }{" "}
-                    → Top level
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* ACTIONS */}
-
-            <div className="modal-actions">
-              <button
-                className="button button-secondary"
-                onClick={
-                  closeEditUser
-                }
-                disabled={
-                  savingEdit
-                }
-              >
-                Cancel
-              </button>
-
-              <button
-                className="button button-primary"
-                onClick={
-                  saveEditUser
-                }
-                disabled={
-                  savingEdit
-                }
-              >
-                {savingEdit
-                  ? "Saving..."
-                  : "Save changes"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </DashboardLayout>
   );
 }

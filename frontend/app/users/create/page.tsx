@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+
 import { api } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
@@ -9,60 +10,132 @@ import DashboardLayout from "@/components/layouts/DashboardLayout";
 type Role = {
   id: number;
   name: string;
-  level: number;
+  isAdmin: boolean;
+  active: boolean;
+  reportsToRoleId: number | null;
+
+  reportsToRole?: {
+    id: number;
+    name: string;
+    isAdmin: boolean;
+    active: boolean;
+  } | null;
 };
 
 type Manager = {
   id: number;
   name: string;
+  email: string;
+
   role?: {
+    id: number;
     name: string;
+    isAdmin: boolean;
+    active: boolean;
   };
+};
+
+type CurrentUser = {
+  id: number;
+  name: string;
+  role?: string;
+  permissions?: string[];
 };
 
 export default function CreateUserPage() {
   const router = useRouter();
 
-  const [authorized, setAuthorized] = useState(false);
-  const [checkingAuth, setCheckingAuth] = useState(true);
+  // -----------------------------------
+  // AUTH
+  // -----------------------------------
 
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [authorized, setAuthorized] =
+    useState(false);
 
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [roleId, setRoleId] = useState("");
+  const [checkingAuth, setCheckingAuth] =
+    useState(true);
+
+  const [currentUser, setCurrentUser] =
+    useState<CurrentUser | null>(null);
+
+  // -----------------------------------
+  // FORM
+  // -----------------------------------
+
+  const [name, setName] =
+    useState("");
+
+  const [email, setEmail] =
+    useState("");
+
+  const [password, setPassword] =
+    useState("");
+
+  const [roleId, setRoleId] =
+    useState("");
+
+  const [managerId, setManagerId] =
+    useState("");
+
+  // -----------------------------------
+  // DATA
+  // -----------------------------------
+
+  const [roles, setRoles] =
+    useState<Role[]>([]);
 
   const [possibleManagers, setPossibleManagers] =
     useState<Manager[]>([]);
 
-  const [managerId, setManagerId] = useState("");
+  const [selectedRole, setSelectedRole] =
+    useState<Role | null>(null);
 
-  const [loading, setLoading] = useState(false);
-  const [loadingRoles, setLoadingRoles] = useState(true);
-  const [loadingManagers, setLoadingManagers] = useState(false);
+  // -----------------------------------
+  // LOADING
+  // -----------------------------------
 
-  const [error, setError] = useState("");
+  const [loading, setLoading] =
+    useState(false);
+
+  const [loadingRoles, setLoadingRoles] =
+    useState(true);
+
+  const [loadingManagers, setLoadingManagers] =
+    useState(false);
+
+  // -----------------------------------
+  // ERROR
+  // -----------------------------------
+
+  const [error, setError] =
+    useState("");
 
   // -----------------------------------
   // CHECK AUTH
   // -----------------------------------
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
+    const token =
+      localStorage.getItem("token");
 
     if (!token) {
       router.replace("/login");
       return;
     }
 
-    const user: any = getUser();
+    const user =
+      getUser() as CurrentUser | null;
 
-    const permissions: string[] =
+    setCurrentUser(user);
+
+    const permissions =
       user?.permissions || [];
 
-    // Only Admin has users.create
-    if (!permissions.includes("users.create")) {
+    if (
+      !permissions.includes(
+        "users.create",
+      )
+    ) {
       router.replace("/dashboard");
       return;
     }
@@ -81,38 +154,49 @@ export default function CreateUserPage() {
     }
 
     async function loadRoles() {
+      setLoadingRoles(true);
+      setError("");
+
       try {
-        const response = await api.get("/roles");
+        const response =
+          await api.get("/roles");
 
         /*
-         * Admin should not create another Admin.
+         * The backend is the source of truth
+         * for administrator status.
          *
-         * Your levels:
+         * Do NOT use role.level here.
          *
-         * Admin      = 4
-         * Manager    = 3
-         * Supervisor = 2
-         * Developer   = 1
+         * Admin roles are excluded because the
+         * current UsersService does not allow
+         * administrators to create another
+         * administrator.
          */
-        const availableRoles = response.data
-          .filter(
-            (role: Role) =>
-              role.level < 4,
-          )
-          .sort(
-            (a: Role, b: Role) =>
-              b.level - a.level,
-          );
+
+        const availableRoles =
+          response.data
+            .filter(
+              (role: Role) =>
+                !role.isAdmin &&
+                role.active,
+            )
+            .sort(
+              (a: Role, b: Role) =>
+                a.name.localeCompare(
+                  b.name,
+                ),
+            );
 
         setRoles(availableRoles);
-      } catch (err) {
+      } catch (err: any) {
         console.error(
           "Unable to load roles:",
           err,
         );
 
         setError(
-          "Unable to load available roles.",
+          err?.response?.data?.message ||
+            "Unable to load available roles.",
         );
       } finally {
         setLoadingRoles(false);
@@ -123,11 +207,36 @@ export default function CreateUserPage() {
   }, [authorized]);
 
   // -----------------------------------
+  // HANDLE ROLE CHANGE
+  // -----------------------------------
+
+  function handleRoleChange(
+    newRoleId: string,
+  ) {
+    setRoleId(newRoleId);
+
+    setManagerId("");
+
+    setPossibleManagers([]);
+
+    setError("");
+
+    const role =
+      roles.find(
+        (item) =>
+          String(item.id) ===
+          newRoleId,
+      ) || null;
+
+    setSelectedRole(role);
+  }
+
+  // -----------------------------------
   // LOAD POSSIBLE MANAGERS
   // -----------------------------------
 
   useEffect(() => {
-    if (!roleId) {
+    if (!authorized || !roleId) {
       setPossibleManagers([]);
       setManagerId("");
       return;
@@ -135,14 +244,18 @@ export default function CreateUserPage() {
 
     async function loadManagers() {
       setLoadingManagers(true);
+      setError("");
       setManagerId("");
 
       try {
-        const response = await api.get(
-          `/users/possible-managers-for-role/${roleId}`,
-        );
+        const response =
+          await api.get(
+            `/users/possible-managers-for-role/${roleId}`,
+          );
 
-        setPossibleManagers(response.data);
+        setPossibleManagers(
+          response.data,
+        );
       } catch (err: any) {
         console.error(
           "Unable to load managers:",
@@ -161,7 +274,7 @@ export default function CreateUserPage() {
     }
 
     loadManagers();
-  }, [roleId]);
+  }, [authorized, roleId]);
 
   // -----------------------------------
   // CREATE USER
@@ -172,47 +285,134 @@ export default function CreateUserPage() {
   ) {
     e.preventDefault();
 
-    setLoading(true);
     setError("");
 
-    if (!roleId) {
-      setError("Please select a role.");
-      setLoading(false);
+    // -----------------------------------
+    // BASIC VALIDATION
+    // -----------------------------------
+
+    if (!name.trim()) {
+      setError(
+        "Name is required.",
+      );
       return;
     }
 
+    if (!email.trim()) {
+      setError(
+        "Email is required.",
+      );
+      return;
+    }
+
+    if (!password) {
+      setError(
+        "Password is required.",
+      );
+      return;
+    }
+
+    if (!roleId) {
+      setError(
+        "Please select a role.",
+      );
+      return;
+    }
+
+    if (!selectedRole) {
+      setError(
+        "Selected role could not be found.",
+      );
+      return;
+    }
+
+    // -----------------------------------
+    // ADMIN ROLE
+    // -----------------------------------
+
     /*
-     * Every non-admin user must have
-     * a manager.
+     * Admin users never have a manager.
+     *
+     * Currently admin roles are not exposed
+     * in the create form, but keep this logic
+     * here so the request remains consistent
+     * with the backend.
      */
+
+    if (selectedRole.isAdmin) {
+      setManagerId("");
+    }
+
+    // -----------------------------------
+    // NORMAL ROLE
+    // -----------------------------------
+
+    /*
+     * A normal role must have a reporting
+     * role defined.
+     *
+     * However, the backend currently allows
+     * managerId = null when no matching manager
+     * exists yet.
+     *
+     * Therefore:
+     *
+     * - If managers exist -> user should select one.
+     * - If no managers exist -> allow creation
+     *   without a manager.
+     *
+     * The backend remains the final authority.
+     */
+
     if (
+      !selectedRole.isAdmin &&
+      selectedRole.reportsToRoleId !== null &&
       possibleManagers.length > 0 &&
       !managerId
     ) {
       setError(
         "Please select who this user reports to.",
       );
-      setLoading(false);
       return;
     }
+
+    setLoading(true);
 
     try {
       await api.post("/users", {
         name: name.trim(),
-        email: email.trim(),
+
+        email: email
+          .trim()
+          .toLowerCase(),
+
         password,
+
         roleId: Number(roleId),
-        managerId: managerId
-          ? Number(managerId)
-          : null,
+
+        managerId:
+          selectedRole.isAdmin
+            ? null
+            : managerId
+              ? Number(managerId)
+              : null,
       });
 
       router.push("/users");
     } catch (err: any) {
-      setError(
-        err?.response?.data?.message ||
-          "Unable to create user.",
-      );
+      const message =
+        err?.response?.data?.message;
+
+      if (Array.isArray(message)) {
+        setError(
+          message.join(", "),
+        );
+      } else {
+        setError(
+          message ||
+            "Unable to create user.",
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -251,7 +451,8 @@ export default function CreateUserPage() {
           <h1>Create user</h1>
 
           <p>
-            Add a new user to the application.
+            Add a new user to the
+            application.
           </p>
         </div>
 
@@ -260,6 +461,7 @@ export default function CreateUserPage() {
           onClick={() =>
             router.push("/users")
           }
+          type="button"
         >
           ← Back to users
         </button>
@@ -275,8 +477,9 @@ export default function CreateUserPage() {
             <h2>User information</h2>
 
             <p>
-              Enter the account details for
-              the new user.
+              Enter the account details
+              and hierarchy information
+              for the new user.
             </p>
           </div>
         </div>
@@ -287,13 +490,13 @@ export default function CreateUserPage() {
         >
           {error && (
             <div className="alert-error">
-              {Array.isArray(error)
-                ? error.join(", ")
-                : error}
+              {error}
             </div>
           )}
 
+          {/* -------------------------------- */}
           {/* NAME + EMAIL */}
+          {/* -------------------------------- */}
 
           <div className="form-row">
             <div className="form-group">
@@ -307,7 +510,9 @@ export default function CreateUserPage() {
                 placeholder="e.g. Ahmed Khan"
                 value={name}
                 onChange={(e) =>
-                  setName(e.target.value)
+                  setName(
+                    e.target.value,
+                  )
                 }
                 required
               />
@@ -324,14 +529,18 @@ export default function CreateUserPage() {
                 placeholder="e.g. ahmed@company.com"
                 value={email}
                 onChange={(e) =>
-                  setEmail(e.target.value)
+                  setEmail(
+                    e.target.value,
+                  )
                 }
                 required
               />
             </div>
           </div>
 
+          {/* -------------------------------- */}
           {/* PASSWORD + ROLE */}
+          {/* -------------------------------- */}
 
           <div className="form-row">
             <div className="form-group">
@@ -345,7 +554,9 @@ export default function CreateUserPage() {
                 placeholder="Create a password"
                 value={password}
                 onChange={(e) =>
-                  setPassword(e.target.value)
+                  setPassword(
+                    e.target.value,
+                  )
                 }
                 required
               />
@@ -366,7 +577,9 @@ export default function CreateUserPage() {
                   className="form-input"
                   value={roleId}
                   onChange={(e) =>
-                    setRoleId(e.target.value)
+                    handleRoleChange(
+                      e.target.value,
+                    )
                   }
                   required
                 >
@@ -374,66 +587,13 @@ export default function CreateUserPage() {
                     Select a role
                   </option>
 
-                  {roles.map((role) => (
-                    <option
-                      key={role.id}
-                      value={role.id}
-                    >
-                      {role.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-
-              <div className="field-help">
-                Select the user's position in
-                the company hierarchy.
-              </div>
-            </div>
-          </div>
-
-          {/* REPORTS TO */}
-
-          {roleId && (
-            <div className="form-group">
-              <label htmlFor="manager">
-                Reports To
-              </label>
-
-              {loadingManagers ? (
-                <div className="form-input">
-                  Loading managers...
-                </div>
-              ) : possibleManagers.length ===
-                0 ? (
-                <div className="field-help">
-                  No managers are available for
-                  this role.
-                </div>
-              ) : (
-                <select
-                  id="manager"
-                  className="form-input"
-                  value={managerId}
-                  onChange={(e) =>
-                    setManagerId(
-                      e.target.value,
-                    )
-                  }
-                  required
-                >
-                  <option value="">
-                    Select manager
-                  </option>
-
-                  {possibleManagers.map(
-                    (manager) => (
+                  {roles.map(
+                    (role) => (
                       <option
-                        key={manager.id}
-                        value={manager.id}
+                        key={role.id}
+                        value={role.id}
                       >
-                        {manager.name} —{" "}
-                        {manager.role?.name}
+                        {role.name}
                       </option>
                     ),
                   )}
@@ -441,13 +601,157 @@ export default function CreateUserPage() {
               )}
 
               <div className="field-help">
-                The user will report to someone
-                one level above their role.
+                Select the user's
+                position in the company
+                hierarchy.
               </div>
+            </div>
+          </div>
+
+          {/* -------------------------------- */}
+          {/* REPORTING ROLE INFO */}
+          {/* -------------------------------- */}
+
+          {selectedRole &&
+            !selectedRole.isAdmin && (
+              <div
+                style={{
+                  marginTop: "4px",
+                  marginBottom: "20px",
+                  padding:
+                    "12px 14px",
+                  borderRadius: "8px",
+                  background:
+                    "rgba(255,255,255,0.04)",
+                  fontSize: "13px",
+                }}
+              >
+                <strong>
+                  Role hierarchy
+                </strong>
+
+                <div
+                  style={{
+                    marginTop: "6px",
+                  }}
+                >
+                  {selectedRole.reportsToRole ? (
+                    <>
+                      This user will
+                      report to a{" "}
+                      <strong>
+                        {
+                          selectedRole
+                            .reportsToRole
+                            .name
+                        }
+                      </strong>
+                      .
+                    </>
+                  ) : (
+                    <>
+                      This role does
+                      not currently
+                      have a reporting
+                      role configured.
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+          {/* -------------------------------- */}
+          {/* REPORTS TO */}
+          {/* -------------------------------- */}
+
+          {selectedRole &&
+            !selectedRole.isAdmin &&
+            selectedRole
+              .reportsToRoleId !==
+              null && (
+              <div className="form-group">
+                <label htmlFor="manager">
+                  Reports To
+                </label>
+
+                {loadingManagers ? (
+                  <div className="form-input">
+                    Loading managers...
+                  </div>
+                ) : possibleManagers.length ===
+                  0 ? (
+                  <div className="field-help">
+                    No active users currently
+                    exist with the required
+                    reporting role.
+                    <br />
+                    The user can be created
+                    without a manager and
+                    assigned one later.
+                  </div>
+                ) : (
+                  <select
+                    id="manager"
+                    className="form-input"
+                    value={managerId}
+                    onChange={(e) =>
+                      setManagerId(
+                        e.target.value,
+                      )
+                    }
+                  >
+                    <option value="">
+                      Select manager
+                    </option>
+
+                    {possibleManagers.map(
+                      (manager) => (
+                        <option
+                          key={manager.id}
+                          value={
+                            manager.id
+                          }
+                        >
+                          {manager.name}{" "}
+                          —{" "}
+                          {
+                            manager.role
+                              ?.name
+                          }
+                        </option>
+                      ),
+                    )}
+                  </select>
+                )}
+
+                <div className="field-help">
+                  Only active users with
+                  the role required by{" "}
+                  <strong>
+                    {
+                      selectedRole
+                        .name
+                    }
+                  </strong>{" "}
+                  are shown.
+                </div>
+              </div>
+            )}
+
+          {/* -------------------------------- */}
+          {/* ADMIN INFO */}
+          {/* -------------------------------- */}
+
+          {selectedRole?.isAdmin && (
+            <div className="field-help">
+              Administrator users do not
+              report to another user.
             </div>
           )}
 
+          {/* -------------------------------- */}
           {/* ACTIONS */}
+          {/* -------------------------------- */}
 
           <div className="form-actions">
             <button
@@ -456,6 +760,7 @@ export default function CreateUserPage() {
               onClick={() =>
                 router.push("/users")
               }
+              disabled={loading}
             >
               Cancel
             </button>

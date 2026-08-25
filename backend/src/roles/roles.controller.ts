@@ -39,109 +39,139 @@ export class RolesController {
   }
 
   // -----------------------------------
-// CREATE ROLE
-// -----------------------------------
+  // GET ACTIVE GROUPS
+  // IMPORTANT: MUST COME BEFORE :id
+  // -----------------------------------
 
-@Post()
-@UseGuards(JwtAuthGuard, PermissionsGuard)
-@Permissions("roles.manage")
-create(
-  @Body() dto: CreateRoleDto,
-  @Req() req: any,
-) {
-  return this.rolesService.create(
-    dto,
-    Number(req.user.id),
-  );
-}
+  @Get("groups")
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions("roles.manage")
+  findGroups(@Req() req: any) {
+    return this.rolesService.findGroups(
+      Number(req.user.id),
+    );
+  }
 
   // -----------------------------------
-// UPDATE ROLE
-// -----------------------------------
+  // GET GROUP PERMISSIONS
+  // IMPORTANT: MUST COME BEFORE :id
+  // -----------------------------------
 
-@Patch(":id")
-@UseGuards(JwtAuthGuard, PermissionsGuard)
-@Permissions("roles.manage")
-update(
-  @Param("id", ParseIntPipe) id: number,
-  @Body() dto: UpdateRoleDto,
-  @Req() req: any,
-) {
-  return this.rolesService.update(
-    id,
-    dto,
-    Number(req.user.id),
-  );
-}
+  @Get("groups/:groupId/permissions")
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions("roles.manage")
+  findGroupPermissions(
+    @Param("groupId", ParseIntPipe)
+    groupId: number,
 
-// -----------------------------------
-// TOGGLE ROLE STATUS
-// -----------------------------------
-
-@Patch(":id/status")
-@UseGuards(JwtAuthGuard, PermissionsGuard)
-@Permissions("roles.manage")
-toggleStatus(
-  @Param("id", ParseIntPipe) id: number,
-  @Req() req: any,
-) {
-  return this.rolesService.toggleStatus(
-    id,
-    Number(req.user.id),
-  );
-}
-
-// -----------------------------------
-// DELETE ROLE
-// -----------------------------------
-
-@Delete(":id")
-@UseGuards(JwtAuthGuard, PermissionsGuard)
-@Permissions("roles.manage")
-remove(
-  @Param("id", ParseIntPipe) id: number,
-  @Req() req: any,
-) {
-  return this.rolesService.remove(
-    id,
-    Number(req.user.id),
-  );
-}
+    @Req() req: any,
+  ) {
+    return this.rolesService.findGroupPermissions(
+      groupId,
+      Number(req.user.id),
+    );
+  }
 
   // -----------------------------------
-// GET ACTIVE GROUPS
-// -----------------------------------
+  // GET ALL PERMISSIONS
+  // IMPORTANT: MUST COME BEFORE :id
+  // -----------------------------------
 
-@Get("groups")
-@UseGuards(JwtAuthGuard, PermissionsGuard)
-@Permissions("roles.manage")
-findGroups(@Req() req: any) {
-  return this.rolesService.findGroups(
-    Number(req.user.id),
-  );
-}
+  @Get("permissions")
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions("roles.manage")
+  findAllPermissions(@Req() req: any) {
+    return this.rolesService.findAllPermissions(
+      Number(req.user.id),
+    );
+  }
 
-// -----------------------------------
-// GET GROUP PERMISSIONS
-// -----------------------------------
+  // -----------------------------------
+  // GET ONE ROLE
+  // -----------------------------------
 
-@Get("groups/:groupId/permissions")
-@UseGuards(JwtAuthGuard, PermissionsGuard)
-@Permissions("roles.manage")
-findGroupPermissions(
-  @Param(
-    "groupId",
-    ParseIntPipe,
-  )
-  groupId: number,
+  @Get(":id")
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions("roles.manage")
+  findOne(
+    @Param("id", ParseIntPipe) id: number,
+    @Req() req: any,
+  ) {
+    return this.rolesService.findOne(
+      id,
+      Number(req.user.id),
+    );
+  }
 
-  @Req() req: any,
-) {
-  return this.rolesService.findGroupPermissions(
-    groupId,
-    Number(req.user.id),
-  );
-}
+  // -----------------------------------
+  // CREATE ROLE
+  // -----------------------------------
+
+  @Post()
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions("roles.manage")
+  create(
+    @Body() dto: CreateRoleDto,
+    @Req() req: any,
+  ) {
+    return this.rolesService.create(
+      dto,
+      Number(req.user.id),
+    );
+  }
+
+  // -----------------------------------
+  // UPDATE ROLE
+  // -----------------------------------
+
+  @Patch(":id")
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions("roles.manage")
+  update(
+    @Param("id", ParseIntPipe) id: number,
+    @Body() dto: UpdateRoleDto,
+    @Req() req: any,
+  ) {
+    return this.rolesService.update(
+      id,
+      dto,
+      Number(req.user.id),
+    );
+  }
+
+  // -----------------------------------
+  // TOGGLE ROLE STATUS
+  // -----------------------------------
+
+  @Patch(":id/status")
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions("roles.manage")
+  toggleStatus(
+    @Param("id", ParseIntPipe) id: number,
+    @Req() req: any,
+  ) {
+    return this.rolesService.toggleStatus(
+      id,
+      Number(req.user.id),
+    );
+  }
+
+  // -----------------------------------
+  // DELETE ROLE
+  // -----------------------------------
+
+  @Delete(":id")
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions("roles.manage")
+  remove(
+    @Param("id", ParseIntPipe) id: number,
+    @Req() req: any,
+  ) {
+    return this.rolesService.remove(
+      id,
+      Number(req.user.id),
+    );
+  }
 
   // -----------------------------------
   // UPDATE ROLE PERMISSIONS
@@ -158,19 +188,6 @@ findGroupPermissions(
     return this.rolesService.updatePermissions(
       id,
       dto.permissionIds,
-      Number(req.user.id),
-    );
-  }
-
-  // -----------------------------------
-  // GET ALL PERMISSIONS
-  // -----------------------------------
-
-  @Get("permissions")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions("roles.manage")
-  findAllPermissions(@Req() req: any) {
-    return this.rolesService.findAllPermissions(
       Number(req.user.id),
     );
   }

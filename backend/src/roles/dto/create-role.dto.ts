@@ -16,6 +16,10 @@ export class CreateRoleDto {
   @IsOptional()
   groupId?: number;
 
+  @IsOptional()
+@IsInt()
+reportsToRoleId?: number | null;
+
   @IsArray()
   @IsInt({ each: true })
   permissionIds!: number[];

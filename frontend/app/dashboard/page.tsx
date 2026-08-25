@@ -105,59 +105,59 @@ export default function Dashboard() {
         </button>
       </div>
 
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="stat-label">
+      <div className="dash-stats-grid">
+        <div className="dash-stat-card">
+          <div className="dash-stat-label">
             ACCOUNT
           </div>
 
-          <div className="stat-value">
+          <div className="dash-stat-value">
             {user?.name || "-"}
           </div>
 
-          <div className="stat-description">
+          <div className="dash-stat-description">
             Current user
           </div>
         </div>
 
-        <div className="stat-card">
-          <div className="stat-label">
+        <div className="dash-stat-card">
+          <div className="dash-stat-label">
             EMAIL
           </div>
 
-          <div className="stat-value stat-email">
+          <div className="dash-stat-value dash-stat-email">
             {user?.email || "-"}
           </div>
 
-          <div className="stat-description">
+          <div className="dash-stat-description">
             Account email
           </div>
         </div>
 
-        <div className="stat-card">
-          <div className="stat-label">
+        <div className="dash-stat-card">
+          <div className="dash-stat-label">
             ROLE
           </div>
 
-          <div className="stat-value">
+          <div className="dash-stat-value">
             {user?.role || "-"}
           </div>
 
-          <div className="stat-description">
+          <div className="dash-stat-description">
             Access level
           </div>
         </div>
 
-        <div className="stat-card">
-          <div className="stat-label">
+        <div className="dash-stat-card">
+          <div className="dash-stat-label">
             PERMISSIONS
           </div>
 
-          <div className="stat-value">
+          <div className="dash-stat-value">
             {user?.permissions?.length || 0}
           </div>
 
-          <div className="stat-description">
+          <div className="dash-stat-description">
             Assigned permissions
           </div>
         </div>

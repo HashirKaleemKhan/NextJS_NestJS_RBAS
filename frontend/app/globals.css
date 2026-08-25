@@ -207,40 +207,40 @@ a {
   background: #f9fafb;
 }
 
-.stats-grid {
+.dash-stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 16px;
   margin-bottom: 24px;
 }
 
-.stat-card {
+.dash-stat-card {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 20px;
 }
 
-.stat-label {
+.dash-stat-label {
   color: var(--muted);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.1em;
 }
 
-.stat-value {
+.dash-stat-value {
   margin-top: 12px;
   font-size: 23px;
   font-weight: 700;
 }
 
-.stat-email {
+.dash-stat-email {
   font-size: 15px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.stat-description {
+.dash-stat-description {
   margin-top: 6px;
   color: #9ca3af;
   font-size: 12px;
@@ -1352,6 +1352,18 @@ a {
    TREE
    ========================================= */
 
+.hierarchy-tree-scroll {
+  width: 100%;
+  max-width: 100%;
+
+  overflow-x: auto;
+  overflow-y: hidden;
+
+  box-sizing: border-box;
+
+  padding-bottom: 20px;
+}
+
 .hierarchy-tree {
   display: flex;
 
@@ -1360,26 +1372,25 @@ a {
 
   gap: 20px;
 
-  min-width: max-content;
-
-  /*
-   * Allows a wide hierarchy to scroll
-   * without clipping its left side.
-   */
-  padding: 0 24px 20px;
+  width: max-content;
+  min-width: 100%;
 
   box-sizing: border-box;
 }
-.hierarchy-card > .hierarchy-tree {
+
+/* .hierarchy-card > .hierarchy-tree {
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: hidden;
 
   width: 100%;
+  max-width: 100%;
 
   box-sizing: border-box;
 
-  padding-bottom: 20px;
-}
+  padding: 0 24px 20px;
+
+  justify-content: flex-start;
+} */
 
 /* =========================================
    BRANCH
@@ -1585,12 +1596,8 @@ a {
 .admin-hierarchy {
   width: 100%;
 
-  /*
-   * The admin map itself becomes the
-   * horizontal scrolling area.
-   */
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: hidden;
 
   box-sizing: border-box;
 
@@ -3363,6 +3370,766 @@ a {
   }
 
   .modal-actions button {
+    width: 100%;
+  }
+}
+
+.status-badge.status-active {
+  color: #22c55e;
+}
+
+.status-badge.status-active .status-dot {
+  background: #22c55e;
+}
+
+.status-badge.status-inactive {
+  color: #ef4444;
+}
+
+.status-badge.status-inactive .status-dot {
+  background: #ef4444;
+}
+
+/* -----------------------------------
+   GROUP STATS
+----------------------------------- */
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  position: relative;
+  overflow: hidden;
+  padding: 20px 22px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.stat-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+}
+
+.stat-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.stat-card-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.stat-card-value {
+  font-size: 30px;
+  line-height: 1.1;
+  font-weight: 700;
+}
+
+.stat-card-description {
+  font-size: 13px;
+  opacity: 0.6;
+}
+
+
+/* TOTAL */
+
+.stat-card-total {
+  border-color: rgba(100, 140, 255, 0.2);
+  background: rgba(80, 110, 220, 0.07);
+}
+
+.stat-card-total::before {
+  background: #6b8cff;
+}
+
+.stat-card-total .stat-card-label,
+.stat-card-total .stat-card-value {
+  color: #8da5ff;
+}
+
+
+/* ACTIVE */
+
+.stat-card-active {
+  border-color: rgba(55, 200, 120, 0.2);
+  background: rgba(40, 180, 100, 0.07);
+}
+
+.stat-card-active::before {
+  background: #35c878;
+}
+
+.stat-card-active .stat-card-label,
+.stat-card-active .stat-card-value {
+  color: #45d589;
+}
+
+
+/* INACTIVE */
+
+.stat-card-inactive {
+  border-color: rgba(240, 80, 80, 0.2);
+  background: rgba(220, 60, 60, 0.07);
+}
+
+.stat-card-inactive::before {
+  background: #ef5350;
+}
+
+.stat-card-inactive .stat-card-label,
+.stat-card-inactive .stat-card-value {
+  color: #ff6666;
+}
+
+
+/* -----------------------------------
+   MOBILE
+----------------------------------- */
+
+@media (max-width: 768px) {
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* =========================================
+   ROLE STATISTICS
+========================================= */
+
+.roles-stats-grid {
+  display: grid;
+
+  grid-template-columns:
+    repeat(3, minmax(0, 1fr));
+
+  gap: 14px;
+
+  margin-bottom: 18px;
+}
+
+.roles-stat-card {
+  padding: 18px 20px;
+
+  background: #ffffff;
+
+  border: 1px solid var(--border);
+
+  border-radius: 12px;
+}
+
+.roles-stat-label {
+  margin-bottom: 7px;
+
+  color: #9ca3af;
+
+  font-size: 10px;
+  font-weight: 700;
+
+  letter-spacing: 0.08em;
+}
+
+.roles-stat-value {
+  color: #111827;
+
+  font-size: 28px;
+  font-weight: 800;
+
+  line-height: 1.1;
+}
+
+.roles-stat-description {
+  margin-top: 5px;
+
+  color: #6b7280;
+
+  font-size: 12px;
+}
+
+/* ACTIVE */
+
+.roles-stat-active {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.roles-stat-active .roles-stat-label,
+.roles-stat-active .roles-stat-value {
+  color: #166534;
+}
+
+/* INACTIVE */
+
+.roles-stat-inactive {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.roles-stat-inactive .roles-stat-label,
+.roles-stat-inactive .roles-stat-value {
+  color: #991b1b;
+}
+
+
+/* =========================================
+   ROLE LIST
+========================================= */
+
+.roles-list-card {
+  overflow: hidden;
+}
+
+.roles-table-wrapper {
+  width: 100%;
+
+  overflow-x: auto;
+}
+
+.roles-table {
+  width: 100%;
+
+  border-collapse: collapse;
+
+  min-width: 1000px;
+}
+
+.roles-table th {
+  padding: 12px 16px;
+
+  background: #f9fafb;
+
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+
+  color: #9ca3af;
+
+  font-size: 9px;
+  font-weight: 700;
+
+  letter-spacing: 0.08em;
+
+  text-align: left;
+
+  white-space: nowrap;
+}
+
+.roles-table td {
+  padding: 15px 16px;
+
+  border-bottom: 1px solid var(--border);
+
+  color: #4b5563;
+
+  font-size: 13px;
+
+  vertical-align: middle;
+}
+
+.roles-table tbody tr:hover {
+  background: #fafafa;
+}
+
+.roles-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+
+/* =========================================
+   ROLE NAME
+========================================= */
+
+.role-list-name {
+  display: flex;
+
+  align-items: center;
+
+  gap: 11px;
+
+  min-width: 180px;
+}
+
+.role-small-icon {
+  flex: 0 0 36px;
+
+  width: 36px;
+  height: 36px;
+
+  display: flex;
+
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 9px;
+
+  background: #ede9fe;
+
+  color: #6d28d9;
+
+  font-size: 14px;
+
+  font-weight: 700;
+}
+
+.role-list-name strong {
+  display: block;
+
+  color: #111827;
+
+  font-size: 13px;
+
+  font-weight: 700;
+}
+
+.role-list-name span {
+  display: block;
+
+  margin-top: 2px;
+
+  color: #9ca3af;
+
+  font-size: 10px;
+}
+
+
+/* =========================================
+   STATUS
+========================================= */
+
+.role-statuses {
+  display: flex;
+
+  flex-wrap: wrap;
+
+  gap: 5px;
+}
+
+.status-admin {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+
+/* =========================================
+   LIST ACTIONS
+========================================= */
+
+.role-list-actions {
+  display: flex;
+
+  align-items: center;
+
+  gap: 6px;
+
+  flex-wrap: wrap;
+}
+
+.role-list-actions .button {
+  white-space: nowrap;
+}
+
+
+/* =========================================
+   ROLE FORM PAGE
+========================================= */
+
+.role-form-card {
+  max-width: 760px;
+}
+
+.role-form {
+  padding-top: 4px;
+}
+
+.role-form-actions {
+  display: flex;
+
+  justify-content: flex-end;
+
+  gap: 10px;
+
+  margin-top: 24px;
+
+  padding-top: 18px;
+
+  border-top: 1px solid #e5e7eb;
+}
+
+.role-form-actions .button {
+  min-width: 120px;
+}
+
+
+/* =========================================
+   RESPONSIVE
+========================================= */
+
+@media (max-width: 900px) {
+  .roles-stats-grid {
+    grid-template-columns:
+      repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .roles-header-actions {
+    width: 100%;
+  }
+
+  .roles-header-actions .button {
+    flex: 1;
+  }
+
+  .roles-stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .role-form-actions {
+    flex-direction: column-reverse;
+  }
+
+  .role-form-actions .button {
+    width: 100%;
+  }
+}
+/* =========================================
+   EDIT USER
+   ========================================= */
+
+/* =========================================
+   HIERARCHY INFO
+   ========================================= */
+
+.hierarchy-info-card {
+  margin-top: 4px;
+  padding: 18px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.hierarchy-info-label {
+  margin-bottom: 14px;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.hierarchy-info-content {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.hierarchy-user,
+.hierarchy-manager {
+  min-width: 0;
+}
+
+.hierarchy-user-name,
+.hierarchy-manager-name {
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.hierarchy-user-role,
+.hierarchy-manager-role {
+  margin-top: 4px;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
+}
+
+.hierarchy-arrow {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 20px;
+  line-height: 1;
+}
+.edit-role-display {
+  width: 100%;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+
+  padding: 0 14px;
+
+  box-sizing: border-box;
+
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+
+  background: rgba(255, 255, 255, 0.04);
+
+  color: #000000;
+
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+/* FOR USER EDIT PAGE /*
+/* =========================================
+   USER EDIT FORM
+   ========================================= */
+
+.edit-form-section {
+  width: 100%;
+  margin-top: 26px;
+}
+
+.edit-form-section:first-of-type {
+  margin-top: 0;
+}
+
+.edit-form-section .form-group {
+  width: 100%;
+}
+
+
+/* =========================================
+   ROLE DISPLAY
+   ========================================= */
+
+.edit-role-display {
+  width: 100%;
+  min-height: 46px;
+  box-sizing: border-box;
+
+  display: flex;
+  align-items: center;
+
+  padding: 0 14px;
+
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+
+  background: rgba(255, 255, 255, 0.04);
+
+  color: #111827;
+
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+
+/* =========================================
+   MANAGER SELECT
+   ========================================= */
+
+.edit-manager-select {
+  width: 100%;
+  min-height: 46px;
+  box-sizing: border-box;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 0 13px;
+  font-size: 14px;
+}
+
+.edit-loading {
+  width: 100%;
+  min-height: 46px;
+  box-sizing: border-box;
+
+  display: flex;
+  align-items: center;
+}
+
+
+/* =========================================
+   HIERARCHY PREVIEW
+   ========================================= */
+
+.hierarchy-preview {
+  width: 100%;
+  box-sizing: border-box;
+
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 12px;
+
+  background: rgba(255, 255, 255, 0.025);
+
+  overflow: hidden;
+}
+
+
+/* =========================================
+   HIERARCHY HEADER
+   ========================================= */
+
+.hierarchy-preview-header {
+  width: 100%;
+  box-sizing: border-box;
+
+  padding: 16px 18px;
+
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.hierarchy-preview-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.hierarchy-preview-subtitle {
+  margin-top: 4px;
+
+  font-size: 12px;
+  line-height: 1.5;
+
+  opacity: 0.55;
+}
+
+
+/* =========================================
+   HIERARCHY BODY
+   ========================================= */
+
+.hierarchy-preview-body {
+  width: 100%;
+  box-sizing: border-box;
+
+  display: flex;
+  align-items: stretch;
+
+  gap: 12px;
+
+  padding: 16px;
+}
+
+
+/* =========================================
+   PERSON CARD
+   ========================================= */
+
+.hierarchy-person {
+  flex: 1;
+  min-width: 0;
+
+  box-sizing: border-box;
+
+  display: flex;
+  align-items: center;
+
+  gap: 12px;
+
+  padding: 13px 14px;
+
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 9px;
+
+  background: rgba(255, 255, 255, 0.035);
+}
+
+
+/* =========================================
+   AVATAR
+   ========================================= */
+
+.hierarchy-avatar {
+  width: 36px;
+  height: 36px;
+
+  flex: 0 0 36px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 50%;
+
+  background: rgba(255, 255, 255, 0.08);
+
+  font-size: 13px;
+  font-weight: 700;
+}
+
+
+/* =========================================
+   PERSON TEXT
+   ========================================= */
+
+.hierarchy-person-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.hierarchy-person-name {
+  overflow: hidden;
+
+  font-size: 14px;
+  font-weight: 600;
+
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.hierarchy-person-role {
+  margin-top: 3px;
+
+  font-size: 12px;
+
+  opacity: 0.55;
+}
+
+
+/* =========================================
+   ARROW
+   ========================================= */
+
+.hierarchy-arrow {
+  width: 30px;
+  flex: 0 0 30px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  font-size: 30px;
+  font-weight: 600;
+
+  color: rgba(255, 0, 0, 0.65);
+  opacity: 1;
+
+  visibility: visible;
+}
+
+
+/* =========================================
+   MOBILE
+   ========================================= */
+
+@media (max-width: 700px) {
+  .hierarchy-preview-body {
+    flex-direction: column;
+  }
+
+  .hierarchy-arrow {
+    width: 100%;
+    height: 20px;
+    flex: 0 0 20px;
+
+    transform: rotate(90deg);
+  }
+
+  .hierarchy-person {
     width: 100%;
   }
 }

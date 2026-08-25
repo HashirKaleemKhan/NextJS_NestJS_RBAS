@@ -92,6 +92,31 @@ getPossibleManagersForRole(
   );
 }
 
+// -----------------------------------
+// GET SINGLE USER
+// -----------------------------------
+
+@Get(":id")
+@UseGuards(
+  JwtAuthGuard,
+  PermissionsGuard,
+)
+@Permissions("users.update")
+findOne(
+  @Param(
+    "id",
+    ParseIntPipe,
+  )
+  id: number,
+
+  @Req() req: any,
+) {
+  return this.usersService.findOne(
+    id,
+    Number(req.user.id),
+  );
+}
+
   // -----------------------------------
   // POSSIBLE MANAGERS FOR EXISTING USERS
   // -----------------------------------

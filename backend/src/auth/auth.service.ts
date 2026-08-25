@@ -68,6 +68,7 @@ export class AuthService {
   include: {
     role: {
       include: {
+        group: true,
         permissions: {
           include: {
             permission: true,
@@ -82,6 +83,19 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    if (
+  user.role.group &&
+  !user.role.group.active
+) {
+  throw new UnauthorizedException(
+    "Your group is inactive. Please contact an administrator.",
+  );
+}
+if (!user.role.active) {
+  throw new UnauthorizedException(
+    'Your role is currently inactive. Please contact an administrator.',
+  );
+}
     const valid = await bcrypt.compare(
       loginDto.password,
       user.password,
@@ -91,11 +105,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    if (!user.role.active) {
-  throw new UnauthorizedException(
-    'Your role is currently inactive. Please contact an administrator.',
-  );
-}
+    
 
     const permissions = user.role.isAdmin
   ? (

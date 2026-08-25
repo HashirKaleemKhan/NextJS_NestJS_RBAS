@@ -3,7 +3,6 @@ import {
   IsInt,
   IsOptional,
   IsString,
-  Min,
 } from "class-validator";
 
 export class UpdateRoleDto {
@@ -16,9 +15,8 @@ export class UpdateRoleDto {
   groupId?: number | null;
 
   @IsOptional()
-  @IsInt()
-  @Min(1)
-  level?: number;
+@IsInt()
+reportsToRoleId?: number | null;
 
   @IsOptional()
   @IsBoolean()
