@@ -91,6 +91,14 @@ export default function RoleForm({
       role?.groupId ?? null,
     );
 
+  /*
+   * Parent permission currently expanded.
+   *
+   * null = all collapsed
+   */
+  const [expandedPermissionGroup, setExpandedPermissionGroup] =
+    useState<number | null>(null);
+
   // -----------------------------------
   // LOAD GROUPS + ROLES
   // -----------------------------------
@@ -179,9 +187,16 @@ export default function RoleForm({
             availableIds.includes(id),
         ),
       );
+
+      /*
+       * Start with all parent permissions
+       * collapsed.
+       */
+      setExpandedPermissionGroup(null);
     } catch (err: any) {
       setAvailablePermissions([]);
       setSelectedPermissions([]);
+      setExpandedPermissionGroup(null);
 
       setError(
         err?.response?.data?.message ||
@@ -206,6 +221,7 @@ export default function RoleForm({
 
     setSelectedPermissions([]);
     setAvailablePermissions([]);
+    setExpandedPermissionGroup(null);
 
     if (groupId === null) {
       return;
@@ -235,6 +251,7 @@ export default function RoleForm({
 
       setAvailablePermissions([]);
       setSelectedPermissions([]);
+      setExpandedPermissionGroup(null);
 
       return;
     }
@@ -261,7 +278,22 @@ export default function RoleForm({
   }
 
   // -----------------------------------
-  // TOGGLE PERMISSION
+  // TOGGLE PARENT PERMISSION
+  // -----------------------------------
+
+  function togglePermissionGroup(
+    groupId: number,
+  ) {
+    setExpandedPermissionGroup(
+      (current) =>
+        current === groupId
+          ? null
+          : groupId,
+    );
+  }
+
+  // -----------------------------------
+  // TOGGLE CHILD PERMISSION
   // -----------------------------------
 
   function togglePermission(
@@ -398,6 +430,10 @@ export default function RoleForm({
     }
   }
 
+  // -----------------------------------
+  // LOADING
+  // -----------------------------------
+
   if (loading) {
     return (
       <div className="page-loading">
@@ -405,6 +441,10 @@ export default function RoleForm({
       </div>
     );
   }
+
+  // -----------------------------------
+  // UI
+  // -----------------------------------
 
   return (
     <form
@@ -417,180 +457,197 @@ export default function RoleForm({
         </div>
       )}
 
-      {/* ROLE NAME */}
+      {/* ----------------------------------- */}
+{/* ROLE SETTINGS */}
+{/* ----------------------------------- */}
 
-      <div className="form-group">
-        <label htmlFor="role-name">
-          Role name
-        </label>
+<div className="role-settings-grid">
 
-        <input
-          id="role-name"
-          type="text"
-          value={form.name}
-          onChange={(event) =>
-            setForm((current) => ({
-              ...current,
-              name:
-                event.target.value,
-            }))
-          }
-          placeholder="e.g. HR Manager"
-          disabled={saving}
-        />
-      </div>
+  {/* ROLE NAME */}
 
-      {/* GROUP */}
+  <div className="form-group">
+    <label htmlFor="role-name">
+      Role name
+    </label>
 
-      <div className="form-group">
-        <label htmlFor="role-group">
-          Group
-        </label>
+    <input
+      id="role-name"
+      type="text"
+      value={form.name}
+      onChange={(event) =>
+        setForm((current) => ({
+          ...current,
+          name: event.target.value,
+        }))
+      }
+      placeholder="e.g. HR Manager"
+      disabled={saving}
+    />
+  </div>
 
-        <select
-          id="role-group"
-          value={
-            form.groupId ?? ""
-          }
-          onChange={(event) => {
-            const value =
-              event.target.value;
+  {/* GROUP */}
 
-            handleGroupChange(
+  <div className="form-group">
+    <label htmlFor="role-group">
+      Group
+    </label>
+
+    <select
+      id="role-group"
+      value={form.groupId ?? ""}
+      onChange={(event) => {
+        const value = event.target.value;
+
+        handleGroupChange(
+          value ? Number(value) : null,
+        );
+      }}
+      disabled={
+        saving ||
+        form.isAdmin
+      }
+    >
+      <option value="">
+        Select a group
+      </option>
+
+      {groups.map((group) => (
+        <option
+          key={group.id}
+          value={group.id}
+        >
+          {group.name}
+        </option>
+      ))}
+    </select>
+  </div>
+
+  {/* REPORTS TO */}
+
+  {!form.isAdmin && (
+    <div className="form-group">
+      <label htmlFor="role-reports-to">
+        Reports to
+      </label>
+
+      <select
+        id="role-reports-to"
+        value={
+          form.reportsToRoleId ?? ""
+        }
+        onChange={(event) => {
+          const value =
+            event.target.value;
+
+          setForm((current) => ({
+            ...current,
+            reportsToRoleId:
               value
                 ? Number(value)
                 : null,
-            );
-          }}
-          disabled={
-            saving ||
-            form.isAdmin
-          }
-        >
-          <option value="">
-            Select a group
-          </option>
+          }));
+        }}
+        disabled={saving}
+      >
+        <option value="">
+          Select reporting role
+        </option>
 
-          {groups.map((group) => (
+        {roles
+          .filter(
+            (item) =>
+              item.id !== role?.id,
+          )
+          .map((item) => (
             <option
-              key={group.id}
-              value={group.id}
+              key={item.id}
+              value={item.id}
             >
-              {group.name}
+              {item.name}
             </option>
           ))}
-        </select>
-      </div>
+      </select>
 
-      {/* REPORTS TO */}
+      <small>
+        Users with this role must report
+        to a user with the selected role.
+      </small>
+    </div>
+  )}
 
-      {!form.isAdmin && (
-        <div className="form-group">
-          <label htmlFor="role-reports-to">
-            Reports to
-          </label>
+  {/* ACTIVE */}
 
-          <select
-            id="role-reports-to"
-            value={
-              form.reportsToRoleId ??
-              ""
-            }
-            onChange={(event) => {
-              const value =
-                event.target.value;
-
-              setForm((current) => ({
-                ...current,
-                reportsToRoleId:
-                  value
-                    ? Number(value)
-                    : null,
-              }));
-            }}
-            disabled={saving}
-          >
-            <option value="">
-              Select reporting role
-            </option>
-
-            {roles
-              .filter(
-                (item) =>
-                  item.id !==
-                  role?.id,
-              )
-              .map((item) => (
-                <option
-                  key={item.id}
-                  value={item.id}
-                >
-                  {item.name}
-                </option>
-              ))}
-          </select>
-
-          <small>
-            Users with this role must
-            report to a user with the
-            selected role.
-          </small>
-        </div>
-      )}
-
-      {/* ADMIN */}
-
+  {!form.isAdmin && (
+    <div className="role-status-box">
       <label className="permission-option">
         <input
           type="checkbox"
-          checked={form.isAdmin}
+          checked={form.active}
           onChange={(event) =>
-            handleAdminChange(
-              event.target.checked,
-            )
+            setForm((current) => ({
+              ...current,
+              active:
+                event.target.checked,
+            }))
           }
           disabled={saving}
         />
 
-        <span>
-          Administrator role
-        </span>
+        <span>Active</span>
       </label>
 
       <p className="form-help">
-        Administrator roles bypass normal
-        group permission assignment.
+        Inactive roles cannot be assigned
+        to new users.
       </p>
+    </div>
+  )}
 
-      {/* ACTIVE */}
+</div>
 
-      {!form.isAdmin && (
-        <label className="permission-option">
-          <input
-            type="checkbox"
-            checked={form.active}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                active:
-                  event.target.checked,
-              }))
-            }
-            disabled={saving}
-          />
+{/* ----------------------------------- */}
+{/* ADMINISTRATOR */}
+{/* ----------------------------------- */}
 
-          <span>
-            Active
-          </span>
-        </label>
-      )}
+<div className="role-admin-box">
 
+  <label className="permission-option">
+    <input
+      type="checkbox"
+      checked={form.isAdmin}
+      onChange={(event) =>
+        handleAdminChange(
+          event.target.checked,
+        )
+      }
+      disabled={saving}
+    />
+
+    <span>
+      Administrator role
+    </span>
+  </label>
+
+  <p className="form-help">
+    Administrator roles bypass normal
+    group permission assignment.
+  </p>
+
+</div>
+      {/* -------------------------------- */}
       {/* PERMISSIONS */}
+      {/* -------------------------------- */}
 
       {!form.isAdmin && (
         <div className="role-permissions-editor">
           <div className="role-section-label">
             ROLE PERMISSIONS
+          </div>
+
+          <div className="role-permissions-description">
+            Select the permissions this role
+            should have. Click a permission
+            category to view its actions.
           </div>
 
           {!form.groupId && (
@@ -618,63 +675,199 @@ export default function RoleForm({
             )}
 
           {!loadingPermissions &&
-            availablePermissions.map(
-              (groupPermission) => (
-                <div
-                  className="permission-group"
-                  key={
-                    groupPermission.id
-                  }
-                >
-                  <div className="permission-group-title">
-                    {
-                      groupPermission.name
-                    }
-                  </div>
+            availablePermissions.length > 0 && (
+              <div className="permissions-browser">
 
-                  {groupPermission.children
-                    .length === 0 ? (
-                    <p className="role-no-permissions">
-                      No child permissions.
-                    </p>
-                  ) : (
-                    groupPermission.children.map(
-                      (permission) => (
-                        <label
-                          className="permission-option"
-                          key={
-                            permission.id
-                          }
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedPermissions.includes(
+                {/* -------------------------------- */}
+                {/* PARENT PERMISSIONS */}
+                {/* -------------------------------- */}
+
+                <div className="permission-parent-row">
+                  {availablePermissions.map(
+                    (groupPermission) => {
+                      const isExpanded =
+                        expandedPermissionGroup ===
+                        groupPermission.id;
+
+                      const selectedCount =
+                        groupPermission.children.filter(
+                          (permission) =>
+                            selectedPermissions.includes(
                               permission.id,
-                            )}
-                            onChange={() =>
-                              togglePermission(
-                                permission.id,
-                              )
-                            }
-                            disabled={saving}
-                          />
+                            ),
+                        ).length;
 
-                          <span>
-                            {
-                              permission.name
-                            }
+                      return (
+                        <button
+                          key={
+                            groupPermission.id
+                          }
+                          type="button"
+                          className={`permission-parent-card ${
+                            isExpanded
+                              ? "is-expanded"
+                              : ""
+                          } ${
+                            selectedCount > 0
+                              ? "has-selection"
+                              : ""
+                          }`}
+                          onClick={() =>
+                            togglePermissionGroup(
+                              groupPermission.id,
+                            )
+                          }
+                          disabled={saving}
+                        >
+                          <span className="permission-parent-card-left">
+                            <span className="permission-parent-icon">
+                              {isExpanded
+                                ? "−"
+                                : "+"}
+                            </span>
+
+                            <span className="permission-parent-name">
+                              {
+                                groupPermission.name
+                              }
+                            </span>
                           </span>
-                        </label>
-                      ),
-                    )
+
+                          <span className="permission-parent-meta">
+                            {selectedCount > 0
+                              ? `${selectedCount}/${groupPermission.children.length}`
+                              : groupPermission.children.length}
+                          </span>
+                        </button>
+                      );
+                    },
                   )}
                 </div>
-              ),
+
+                {/* -------------------------------- */}
+                {/* CHILD PERMISSIONS */}
+                {/* -------------------------------- */}
+
+                {expandedPermissionGroup !==
+                  null && (
+                  <div className="permission-children-panel">
+                    {availablePermissions
+                      .filter(
+                        (groupPermission) =>
+                          groupPermission.id ===
+                          expandedPermissionGroup,
+                      )
+                      .map(
+                        (groupPermission) => (
+                          <div
+                            key={
+                              groupPermission.id
+                            }
+                            className="permission-children-content"
+                          >
+                            <div className="permission-children-header">
+                              <div>
+                                <div className="permission-children-title">
+                                  {
+                                    groupPermission.name
+                                  }
+                                </div>
+
+                                <div className="permission-children-subtitle">
+                                  Select the actions
+                                  available under
+                                  this permission.
+                                </div>
+                              </div>
+
+                              <div className="permission-children-count">
+                                {
+                                  groupPermission.children.filter(
+                                    (
+                                      permission,
+                                    ) =>
+                                      selectedPermissions.includes(
+                                        permission.id,
+                                      ),
+                                  ).length
+                                }{" "}
+                                selected
+                              </div>
+                            </div>
+
+                            {groupPermission
+                              .children
+                              .length === 0 ? (
+                              <div className="role-no-permissions">
+                                No child permissions.
+                              </div>
+                            ) : (
+                              <div className="permission-child-row">
+                                {groupPermission.children.map(
+                                  (
+                                    permission,
+                                  ) => {
+                                    const checked =
+                                      selectedPermissions.includes(
+                                        permission.id,
+                                      );
+
+                                    return (
+                                      <label
+                                        key={
+                                          permission.id
+                                        }
+                                        className={`permission-child-card ${
+                                          checked
+                                            ? "is-selected"
+                                            : ""
+                                        }`}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={
+                                            checked
+                                          }
+                                          onChange={() =>
+                                            togglePermission(
+                                              permission.id,
+                                            )
+                                          }
+                                          disabled={
+                                            saving
+                                          }
+                                        />
+
+                                        <span className="permission-child-check">
+                                          {checked
+                                            ? "✓"
+                                            : ""}
+                                        </span>
+
+                                        <span className="permission-child-name">
+                                          {
+                                            permission.name
+                                          }
+                                        </span>
+                                      </label>
+                                    );
+                                  },
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ),
+                      )}
+                  </div>
+                )}
+              </div>
             )}
         </div>
       )}
 
+      {/* -------------------------------- */}
       {/* ACTIONS */}
+      {/* -------------------------------- */}
 
       <div className="role-form-actions">
         <button

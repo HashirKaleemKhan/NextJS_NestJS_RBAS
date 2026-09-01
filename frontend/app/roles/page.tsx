@@ -549,7 +549,6 @@ export default function RolesPage() {
                         {/* PERMISSIONS */}
 
                         <td>
-
                           {role.isAdmin ? (
                             <span className="group-permission-chip">
                               Full access
@@ -557,50 +556,39 @@ export default function RolesPage() {
                           ) : (
                             <div
                               style={{
-                                display:
-                                  "flex",
-                                flexWrap:
-                                  "wrap",
+                                display: "flex",
+                                flexWrap: "wrap",
                                 gap: "6px",
                               }}
                             >
-
                               {role.permissions &&
-                              role.permissions.length >
-                                0 ? (
-                                role.permissions.map(
-                                  ({
-                                    permission,
-                                  }) => (
-                                    <span
-                                      key={
-                                        permission.id
-                                      }
-                                      className="group-permission-chip"
-                                    >
-                                      {permission.name
-                                        .split(
-                                          ".",
-                                        )[0]
-                                        .replace(
-                                          /^./,
-                                          (
-                                            char,
-                                          ) =>
-                                            char.toUpperCase(),
-                                        )}
-                                    </span>
+                              role.permissions.length > 0 ? (
+                                Array.from(
+                                  new Set(
+                                    role.permissions.map(
+                                      ({ permission }) =>
+                                        permission.name.split(".")[0],
+                                    ),
                                   ),
-                                )
+                                ).map((parentName) => (
+                                  <span
+                                    key={parentName}
+                                    className="group-permission-chip"
+                                  >
+                                    {parentName.replace(
+                                      /^./,
+                                      (char) =>
+                                        char.toUpperCase(),
+                                    )}
+                                  </span>
+                                ))
                               ) : (
                                 <span>
                                   No permissions
                                 </span>
                               )}
-
                             </div>
                           )}
-
                         </td>
 
                         {/* STATUS */}
