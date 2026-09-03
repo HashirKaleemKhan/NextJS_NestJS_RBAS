@@ -3,18 +3,22 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { api } from "@/lib/api";
-import {logout } from "@/lib/auth";
+import { graphqlRequest } from "@/lib/graphql";
+import { logout } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 
 type Permission = {
   id: number;
   name: string;
-  parentId: number | null;
 };
 
 type GroupPermission = {
   permission: Permission;
+};
+
+type GroupRole = {
+  id: number;
+  name: string;
 };
 
 type Group = {
@@ -22,8 +26,82 @@ type Group = {
   name: string;
   active: boolean;
   permissions: GroupPermission[];
-  roles: any[];
+  roles: GroupRole[];
 };
+
+type GroupsQueryResponse = {
+  groups: Group[];
+};
+
+type DeleteGroupResponse = {
+  deleteGroup: {
+    message: string;
+  };
+};
+
+type ToggleGroupResponse = {
+  toggleGroupStatus: Group;
+};
+
+const GROUPS_QUERY = `
+  query {
+    groups {
+      id
+      name
+      active
+      permissions {
+        groupId
+        permissionId
+        permission {
+          id
+          name
+        }
+      }
+      roles {
+        id
+        name
+        groupId
+        reportsToRoleId
+        active
+        isAdmin
+      }
+    }
+  }
+`;
+
+const DELETE_GROUP_MUTATION = `
+  mutation DeleteGroup($id: Int!) {
+    deleteGroup(id: $id) {
+      message
+    }
+  }
+`;
+
+const TOGGLE_GROUP_STATUS_MUTATION = `
+  mutation ToggleGroupStatus($id: Int!) {
+    toggleGroupStatus(id: $id) {
+      id
+      name
+      active
+      permissions {
+        groupId
+        permissionId
+        permission {
+          id
+          name
+        }
+      }
+      roles {
+        id
+        name
+        groupId
+        reportsToRoleId
+        active
+        isAdmin
+      }
+    }
+  }
+`;
 
 export default function GroupsPage() {
   const router = useRouter();
@@ -33,14 +111,10 @@ export default function GroupsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // -----------------------------------
-  // SUCCESS MESSAGE
-  // -----------------------------------
-
   const success = searchParams.get("success");
 
   // -----------------------------------
-  // LOAD GROUPS
+  // AUTH + LOAD
   // -----------------------------------
 
   useEffect(() => {
@@ -50,11 +124,12 @@ export default function GroupsPage() {
       router.replace("/login");
       return;
     }
+
     loadGroups();
-  }, []);
+  }, [router]);
 
   // -----------------------------------
-  // HANDLE SUCCESS MESSAGE
+  // SUCCESS MESSAGE
   // -----------------------------------
 
   useEffect(() => {
@@ -80,12 +155,17 @@ export default function GroupsPage() {
       setLoading(true);
       setError("");
 
-      const response = await api.get("/groups");
+      const response =
+        await graphqlRequest<GroupsQueryResponse>(
+          GROUPS_QUERY,
+        );
 
-      setGroups(response.data);
+      setGroups(response.groups);
     } catch (err: any) {
+      console.error("Unable to load groups:", err);
+
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to load groups.",
       );
     } finally {
@@ -109,7 +189,12 @@ export default function GroupsPage() {
     try {
       setError("");
 
-      await api.delete(`/groups/${group.id}`);
+      await graphqlRequest<DeleteGroupResponse>(
+        DELETE_GROUP_MUTATION,
+        {
+          id: group.id,
+        },
+      );
 
       await loadGroups();
 
@@ -117,8 +202,10 @@ export default function GroupsPage() {
         "/groups?success=deleted",
       );
     } catch (err: any) {
+      console.error("Unable to delete group:", err);
+
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to delete group.",
       );
     }
@@ -132,8 +219,11 @@ export default function GroupsPage() {
     try {
       setError("");
 
-      await api.patch(
-        `/groups/${group.id}/status`,
+      await graphqlRequest<ToggleGroupResponse>(
+        TOGGLE_GROUP_STATUS_MUTATION,
+        {
+          id: group.id,
+        },
       );
 
       await loadGroups();
@@ -146,8 +236,13 @@ export default function GroupsPage() {
         }`,
       );
     } catch (err: any) {
+      console.error(
+        "Unable to update group status:",
+        err,
+      );
+
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to update group status.",
       );
     }
@@ -215,14 +310,12 @@ export default function GroupsPage() {
     <DashboardLayout>
       <div className="groups-page">
 
-        {/* -------------------------------- */}
         {/* HEADER */}
-        {/* -------------------------------- */}
 
         <div className="page-header">
           <div>
             <div className="page-eyebrow">
-              GROUP MANAGEMENT 
+              GROUP MANAGEMENT
             </div>
 
             <h1>Groups</h1>
@@ -245,18 +338,18 @@ export default function GroupsPage() {
             >
               + Create group
             </button>
-              <button
-            className="button button-secondary"
-            onClick={logout}
-          >
-            Logout
-          </button>
+
+            <button
+              className="button button-secondary"
+              onClick={logout}
+            >
+              Logout
+            </button>
+
           </div>
         </div>
 
-        {/* -------------------------------- */}
         {/* SUCCESS */}
-        {/* -------------------------------- */}
 
         {success && getSuccessMessage() && (
           <div className="groups-alert groups-alert-success">
@@ -264,96 +357,87 @@ export default function GroupsPage() {
           </div>
         )}
 
-        {/* -------------------------------- */}
         {/* ERROR */}
-        {/* -------------------------------- */}
 
         {error && (
           <div className="groups-alert groups-alert-error">
-            {Array.isArray(error)
-              ? error.join(", ")
-              : error}
+            {error}
           </div>
         )}
 
         {/* GROUP STATS */}
 
-<div className="stats-grid">
+        <div className="stats-grid">
 
-  {/* TOTAL */}
+          {/* TOTAL */}
 
-  <div className="stat-card stat-card-total">
-    <div className="stat-card-content">
-      <span className="stat-card-label">
-        Total
-      </span>
+          <div className="stat-card stat-card-total">
+            <div className="stat-card-content">
 
-      <strong className="stat-card-value">
-        {groups.length}
-      </strong>
+              <span className="stat-card-label">
+                Total
+              </span>
 
-      <span className="stat-card-description">
-        Total groups
-      </span>
-    </div>
-  </div>
+              <strong className="stat-card-value">
+                {totalGroups}
+              </strong>
 
-  {/* ACTIVE */}
+              <span className="stat-card-description">
+                Total groups
+              </span>
 
-  <div className="stat-card stat-card-active">
-    <div className="stat-card-content">
-      <span className="stat-card-label">
-        Active
-      </span>
+            </div>
+          </div>
 
-      <strong className="stat-card-value">
-        {
-          groups.filter(
-            (group) => group.active,
-          ).length
-        }
-      </strong>
+          {/* ACTIVE */}
 
-      <span className="stat-card-description">
-        Available groups
-      </span>
-    </div>
-  </div>
+          <div className="stat-card stat-card-active">
+            <div className="stat-card-content">
 
-  {/* INACTIVE */}
+              <span className="stat-card-label">
+                Active
+              </span>
 
-  <div className="stat-card stat-card-inactive">
-    <div className="stat-card-content">
-      <span className="stat-card-label">
-        Inactive
-      </span>
+              <strong className="stat-card-value">
+                {activeGroups}
+              </strong>
 
-      <strong className="stat-card-value">
-        {
-          groups.filter(
-            (group) => !group.active,
-          ).length
-        }
-      </strong>
+              <span className="stat-card-description">
+                Available groups
+              </span>
 
-      <span className="stat-card-description">
-        Disabled groups
-      </span>
-    </div>
-  </div>
+            </div>
+          </div>
 
-</div>
+          {/* INACTIVE */}
 
-        {/* -------------------------------- */}
+          <div className="stat-card stat-card-inactive">
+            <div className="stat-card-content">
+
+              <span className="stat-card-label">
+                Inactive
+              </span>
+
+              <strong className="stat-card-value">
+                {inactiveGroups}
+              </strong>
+
+              <span className="stat-card-description">
+                Disabled groups
+              </span>
+
+            </div>
+          </div>
+
+        </div>
+
         {/* EXISTING GROUPS */}
-        {/* -------------------------------- */}
 
         <div className="content-card">
 
           <div
             style={{
-              padding:
-                "20px 24px",
+              padding: "20px 24px",
               borderBottom:
                 "1px solid rgba(255,255,255,0.08)",
             }}
@@ -404,9 +488,7 @@ export default function GroupsPage() {
             </div>
           ) : (
 
-            /* -------------------------------- */
             /* TABLE */
-            /* -------------------------------- */
 
             <div className="table-wrapper">
 
@@ -455,9 +537,7 @@ export default function GroupsPage() {
 
                             <div className="user-avatar">
                               {group.name
-                                .charAt(
-                                  0,
-                                )
+                                .charAt(0)
                                 .toUpperCase()}
                             </div>
 
@@ -468,10 +548,7 @@ export default function GroupsPage() {
                               </div>
 
                               <div className="user-id">
-                                ID #
-                                {
-                                  group.id
-                                }
+                                ID #{group.id}
                               </div>
 
                             </div>
@@ -485,10 +562,8 @@ export default function GroupsPage() {
 
                           <div
                             style={{
-                              display:
-                                "flex",
-                              flexWrap:
-                                "wrap",
+                              display: "flex",
+                              flexWrap: "wrap",
                               gap: "6px",
                             }}
                           >
@@ -505,14 +580,10 @@ export default function GroupsPage() {
                                   className="group-permission-chip"
                                 >
                                   {permission.name
-                                    .split(
-                                      ".",
-                                    )[0]
+                                    .split(".")[0]
                                     .replace(
                                       /^./,
-                                      (
-                                        char,
-                                      ) =>
+                                      (char) =>
                                         char.toUpperCase(),
                                     )}
                                 </span>
@@ -530,15 +601,14 @@ export default function GroupsPage() {
 
                           <span>
                             {
-                              group
-                                .roles
-                                .length
+                              group.roles.length
                             }{" "}
-                            {group.roles
-                              .length ===
-                            1
-                              ? "role"
-                              : "roles"}
+                            {
+                              group.roles.length ===
+                              1
+                                ? "role"
+                                : "roles"
+                            }
                           </span>
 
                         </td>

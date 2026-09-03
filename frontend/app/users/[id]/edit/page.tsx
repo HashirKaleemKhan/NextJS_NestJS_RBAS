@@ -3,25 +3,41 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import { api } from "@/lib/api";
+import { graphqlRequest } from "@/lib/graphql";
 import { getUser } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
+
+type Role = {
+  id: number;
+  name: string;
+  isAdmin: boolean;
+  active: boolean;
+  reportsToRoleId?: number | null;
+  reportsToRole?: {
+    id: number;
+    name: string;
+    isAdmin: boolean;
+    active: boolean;
+  } | null;
+};
 
 type User = {
   id: number;
   name: string;
   email: string;
 
-  role?: {
-    id?: number;
-    name: string;
-    level?: number;
-    active?: boolean;
-  };
+  role?: Role;
 
   manager?: {
     id: number;
     name: string;
+
+    role?: {
+      id: number;
+      name: string;
+      isAdmin: boolean;
+      active: boolean;
+    } | null;
   } | null;
 };
 
@@ -31,9 +47,11 @@ type PossibleManager = {
   email: string;
 
   role?: {
+    id: number;
     name: string;
-    level: number;
-  };
+    isAdmin: boolean;
+    active: boolean;
+  } | null;
 };
 
 type CurrentUser = {
@@ -42,6 +60,136 @@ type CurrentUser = {
   role?: string;
   permissions?: string[];
 };
+
+type UserQueryResponse = {
+  user: User;
+};
+
+type RolesResponse = {
+  rolesForUserCreation: Role[];
+};
+
+type PossibleManagersResponse = {
+  possibleManagers: PossibleManager[];
+};
+
+type PossibleManagersForRoleResponse = {
+  possibleManagersForRole: PossibleManager[];
+};
+
+type UpdateUserResponse = {
+  updateUser: {
+    id: number;
+    name: string;
+    email: string;
+  };
+};
+
+const USER_QUERY = `
+  query User($id: Int!) {
+    user(id: $id) {
+      id
+      name
+      email
+
+      role {
+        id
+        name
+        isAdmin
+        active
+        reportsToRoleId
+
+        reportsToRole {
+          id
+          name
+          isAdmin
+          active
+        }
+      }
+
+      manager {
+        id
+        name
+
+        role {
+          id
+          name
+          isAdmin
+          active
+        }
+      }
+    }
+  }
+`;
+
+const ROLES_QUERY = `
+  query {
+    rolesForUserCreation {
+      id
+      name
+      isAdmin
+      active
+      reportsToRoleId
+
+      reportsToRole {
+        id
+        name
+        isAdmin
+        active
+      }
+    }
+  }
+`;
+
+const POSSIBLE_MANAGERS_QUERY = `
+  query PossibleManagers($id: Int!) {
+    possibleManagers(id: $id) {
+      id
+      name
+      email
+
+      role {
+        id
+        name
+        isAdmin
+        active
+      }
+    }
+  }
+`;
+
+const POSSIBLE_MANAGERS_FOR_ROLE_QUERY = `
+  query PossibleManagersForRole($roleId: Int!) {
+    possibleManagersForRole(roleId: $roleId) {
+      id
+      name
+      email
+
+      role {
+        id
+        name
+        isAdmin
+        active
+      }
+    }
+  }
+`;
+
+const UPDATE_USER_MUTATION = `
+  mutation UpdateUser(
+    $id: Int!
+    $input: UpdateUserInput!
+  ) {
+    updateUser(
+      id: $id
+      input: $input
+    ) {
+      id
+      name
+      email
+    }
+  }
+`;
 
 export default function EditUserPage() {
   const router = useRouter();
@@ -53,24 +201,50 @@ export default function EditUserPage() {
   // AUTH
   // -----------------------------------
 
-  const [authorized, setAuthorized] = useState(false);
-  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [authorized, setAuthorized] =
+    useState(false);
+
+  const [checkingAuth, setCheckingAuth] =
+    useState(true);
+
+  const [currentUser, setCurrentUser] =
+    useState<CurrentUser | null>(null);
 
   // -----------------------------------
   // USER
   // -----------------------------------
 
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] =
+    useState<User | null>(null);
 
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [name, setName] =
+    useState("");
+
+  const [email, setEmail] =
+    useState("");
+
+  const [password, setPassword] =
+    useState("");
+
+  // -----------------------------------
+  // ROLE
+  // -----------------------------------
+
+  const [roles, setRoles] =
+    useState<Role[]>([]);
+
+  const [selectedRoleId, setSelectedRoleId] =
+    useState<number | null>(null);
+
+  const [loadingRoles, setLoadingRoles] =
+    useState(false);
 
   // -----------------------------------
   // MANAGER
   // -----------------------------------
 
-  const [managerId, setManagerId] = useState("");
+  const [managerId, setManagerId] =
+    useState("");
 
   const [possibleManagers, setPossibleManagers] =
     useState<PossibleManager[]>([]);
@@ -82,33 +256,42 @@ export default function EditUserPage() {
   // STATE
   // -----------------------------------
 
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [loading, setLoading] =
+    useState(true);
+
+  const [saving, setSaving] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
 
   // -----------------------------------
   // CHECK AUTH
   // -----------------------------------
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
+    const token =
+      localStorage.getItem("token");
 
     if (!token) {
       router.replace("/login");
       return;
     }
 
-    const currentUser =
+    const loadedCurrentUser =
       getUser() as CurrentUser | null;
 
     const permissions =
-      currentUser?.permissions || [];
+      loadedCurrentUser?.permissions || [];
 
-    if (!permissions.includes("users.update")) {
+    if (
+      !permissions.includes("users.update")
+    ) {
       router.replace("/dashboard");
       return;
     }
 
+    setCurrentUser(loadedCurrentUser);
     setAuthorized(true);
     setCheckingAuth(false);
   }, [router]);
@@ -122,7 +305,10 @@ export default function EditUserPage() {
       return;
     }
 
-    if (!userId || Number.isNaN(userId)) {
+    if (
+      !userId ||
+      Number.isNaN(userId)
+    ) {
       router.replace("/users");
       return;
     }
@@ -132,115 +318,209 @@ export default function EditUserPage() {
         setLoading(true);
         setError("");
 
-        const response = await api.get(
-          `/users/${userId}`,
-        );
+        const response =
+          await graphqlRequest<UserQueryResponse>(
+            USER_QUERY,
+            {
+              id: userId,
+            },
+          );
 
-        const loadedUser: User =
-          response.data;
+        const loadedUser =
+          response.user;
 
         setUser(loadedUser);
 
         setName(loadedUser.name);
         setEmail(loadedUser.email);
 
+        setSelectedRoleId(
+          loadedUser.role?.id ?? null,
+        );
+
         setManagerId(
           loadedUser.manager
-            ? String(loadedUser.manager.id)
+            ? String(
+                loadedUser.manager.id,
+              )
             : "",
         );
       } catch (err: any) {
-        console.error(
-          "Unable to load user:",
-          err,
-        );
+        const message =
+          err?.message ||
+          "Unable to load user.";
 
         if (
-          err?.response?.status === 401
+          message
+            .toLowerCase()
+            .includes("unauthorized")
         ) {
           router.replace("/login");
           return;
         }
 
         if (
-          err?.response?.status === 403
+          message
+            .toLowerCase()
+            .includes("forbidden")
         ) {
           router.replace("/dashboard");
           return;
         }
 
         if (
-          err?.response?.status === 404
+          message
+            .toLowerCase()
+            .includes("not found")
         ) {
           router.replace("/users");
           return;
         }
 
-        setError(
-          err?.response?.data?.message ||
-            "Unable to load user.",
-        );
+        setError(message);
       } finally {
         setLoading(false);
       }
     }
 
     loadUser();
-  }, [authorized, userId, router]);
+  }, [
+    authorized,
+    userId,
+    router,
+  ]);
 
   // -----------------------------------
-  // LOAD POSSIBLE MANAGERS
+  // CAN CHANGE ROLE
+  // -----------------------------------
+
+  const canChangeRole =
+    currentUser?.permissions?.includes(
+      "users.create",
+    ) ?? false;
+
+  // -----------------------------------
+  // LOAD ROLES
   // -----------------------------------
 
   useEffect(() => {
-    if (!authorized || !userId) {
+    if (
+      !authorized ||
+      !userId ||
+      !user ||
+      !currentUser ||
+      !canChangeRole
+    ) {
       return;
     }
+
+    const currentUserData = user;
+    const currentRole = currentUserData.role;
+
+    async function loadRoles() {
+      setLoadingRoles(true);
+
+      try {
+        const response =
+          await graphqlRequest<RolesResponse>(
+            ROLES_QUERY,
+          );
+
+        let loadedRoles =
+          response.rolesForUserCreation;
+
+        /*
+         * Keep the current role visible even
+         * if it is inactive.
+         */
+        if (
+          currentRole &&
+          !loadedRoles.some(
+            (role) =>
+              role.id === currentRole.id,
+          )
+        ) {
+          loadedRoles = [
+            currentRole,
+            ...loadedRoles,
+          ];
+        }
+
+        setRoles(loadedRoles);
+      } catch {
+        setRoles([]);
+      } finally {
+        setLoadingRoles(false);
+      }
+    }
+
+    loadRoles();
+  }, [
+    authorized,
+    userId,
+    user,
+    currentUser,
+    canChangeRole,
+  ]);
+
+  // -----------------------------------
+  // LOAD CURRENT POSSIBLE MANAGERS
+  // -----------------------------------
+
+  useEffect(() => {
+    if (
+      !authorized ||
+      !userId ||
+      !user
+    ) {
+      return;
+    }
+
+    const currentUserData = user;
+    const currentManager =
+      currentUserData.manager;
 
     async function loadManagers() {
       setLoadingManagers(true);
 
       try {
         const response =
-          await api.get(
-            `/users/${userId}/possible-managers`,
+          await graphqlRequest<PossibleManagersResponse>(
+            POSSIBLE_MANAGERS_QUERY,
+            {
+              id: userId,
+            },
           );
 
-        let managers: PossibleManager[] =
-          response.data;
+        let managers =
+          response.possibleManagers;
 
         /*
          * Keep the existing manager in the
          * dropdown if the backend doesn't
          * return them.
          */
-
         if (
-          user?.manager &&
+          currentManager &&
           !managers.some(
             (manager) =>
               manager.id ===
-              user.manager?.id,
+              currentManager.id,
           )
         ) {
           managers = [
             {
-              id: user.manager.id,
-              name: user.manager.name,
+              id: currentManager.id,
+              name: currentManager.name,
               email: "",
-              role: undefined,
+              role: currentManager.role,
             },
             ...managers,
           ];
         }
 
         setPossibleManagers(managers);
-      } catch (err: any) {
-        console.error(
-          "Unable to load possible managers:",
-          err,
-        );
-
+      } catch {
         setPossibleManagers([]);
       } finally {
         setLoadingManagers(false);
@@ -251,8 +531,167 @@ export default function EditUserPage() {
   }, [
     authorized,
     userId,
-    user?.manager,
+    user,
   ]);
+
+  // -----------------------------------
+  // LOAD MANAGERS WHEN ROLE CHANGES
+  // -----------------------------------
+
+  useEffect(() => {
+    if (
+      !authorized ||
+      !canChangeRole ||
+      !user ||
+      !selectedRoleId
+    ) {
+      return;
+    }
+
+    const currentUserData = user;
+    const originalRoleId =
+      currentUserData.role?.id;
+
+    /*
+     * Do not reload managers for the original
+     * role during initial page load.
+     */
+    if (
+      selectedRoleId === originalRoleId
+    ) {
+      return;
+    }
+
+    const selectedRole =
+      roles.find(
+        (role) =>
+          role.id === selectedRoleId,
+      );
+
+    if (!selectedRole) {
+      return;
+    }
+
+    /*
+     * Administrators are the only true
+     * top-level users.
+     */
+    if (selectedRole.isAdmin) {
+      setPossibleManagers([]);
+      setManagerId("");
+      setLoadingManagers(false);
+      return;
+    }
+
+    /*
+     * A non-admin role must have a reporting
+     * role.
+     */
+    if (
+      selectedRole.reportsToRoleId === null ||
+      selectedRole.reportsToRoleId === undefined
+    ) {
+      setPossibleManagers([]);
+      setManagerId("");
+      setLoadingManagers(false);
+      return;
+    }
+
+    async function loadManagersForRole() {
+      try {
+        setLoadingManagers(true);
+
+        const response =
+          await graphqlRequest<PossibleManagersForRoleResponse>(
+            POSSIBLE_MANAGERS_FOR_ROLE_QUERY,
+            {
+              roleId: selectedRoleId,
+            },
+          );
+
+        setPossibleManagers(
+          response.possibleManagersForRole,
+        );
+
+        /*
+         * A role change invalidates the old
+         * manager.
+         */
+        setManagerId("");
+      } catch (err: any) {
+        setPossibleManagers([]);
+
+        setError(
+          err?.message ||
+            "Unable to load possible managers.",
+        );
+      } finally {
+        setLoadingManagers(false);
+      }
+    }
+
+    loadManagersForRole();
+  }, [
+    authorized,
+    canChangeRole,
+    user,
+    selectedRoleId,
+    roles,
+  ]);
+
+  // -----------------------------------
+  // ROLE CHANGE
+  // -----------------------------------
+
+  function handleRoleChange(
+    roleId: number,
+  ) {
+    setSelectedRoleId(roleId);
+    setManagerId("");
+    setPossibleManagers([]);
+    setError("");
+  }
+
+  // -----------------------------------
+  // SELECTED ROLE
+  // -----------------------------------
+
+  const selectedRole =
+    roles.find(
+      (role) =>
+        role.id === selectedRoleId,
+    ) ||
+    user?.role;
+
+  // -----------------------------------
+  // SELECTED MANAGER
+  // -----------------------------------
+
+  const selectedManager =
+    possibleManagers.find(
+      (manager) =>
+        manager.id ===
+        Number(managerId),
+    );
+
+  // -----------------------------------
+  // HIERARCHY STATE
+  // -----------------------------------
+
+  const isSelectedRoleAdmin =
+    selectedRole?.isAdmin === true;
+
+  const roleHasReportingRole =
+    !isSelectedRoleAdmin &&
+    selectedRole?.reportsToRoleId !== null &&
+    selectedRole?.reportsToRoleId !== undefined;
+
+  const managersAvailable =
+    possibleManagers.length > 0;
+
+  const managerRequired =
+    roleHasReportingRole &&
+    managersAvailable;
 
   // -----------------------------------
   // SAVE USER
@@ -269,60 +708,132 @@ export default function EditUserPage() {
 
     setError("");
 
+    // -----------------------------------
+    // NAME
+    // -----------------------------------
+
     if (!name.trim()) {
-      setError("Name is required.");
+      alert("Name is required.");
       return;
     }
 
+    // -----------------------------------
+    // EMAIL
+    // -----------------------------------
+
     if (!email.trim()) {
-      setError("Email is required.");
+      alert("Email is required.");
+      return;
+    }
+
+    // -----------------------------------
+    // PASSWORD
+    // -----------------------------------
+
+    if (
+      password.trim() &&
+      password.trim().length < 6
+    ) {
+      alert(
+        "New password must be at least 6 characters.",
+      );
+      return;
+    }
+
+    // -----------------------------------
+    // ROLE
+    // -----------------------------------
+
+    if (!selectedRoleId) {
+      alert("Role is required.");
+      return;
+    }
+
+    // -----------------------------------
+    // NON-ADMIN ROLE MUST HAVE
+    // REPORTING ROLE
+    // -----------------------------------
+
+    if (
+      selectedRole &&
+      !selectedRole.isAdmin &&
+      (
+        selectedRole.reportsToRoleId === null ||
+        selectedRole.reportsToRoleId ===
+          undefined
+      )
+    ) {
+      alert(
+        "The selected non-administrator role does not have a reporting role.",
+      );
+      return;
+    }
+
+    // -----------------------------------
+    // MANAGER REQUIRED
+    // -----------------------------------
+
+    if (
+      managerRequired &&
+      !managerId
+    ) {
+      alert(
+        `Reports To is required for the selected ${
+          selectedRole?.name || "role"
+        }.`,
+      );
       return;
     }
 
     setSaving(true);
 
     try {
-      const data: {
+      const input: {
         name: string;
         email: string;
         password?: string;
-        managerId?: number | null;
+        roleId: number;
+        managerId: number | null;
       } = {
         name: name.trim(),
         email: email.trim().toLowerCase(),
+        roleId: selectedRoleId,
+
+        /*
+         * Admins are always top level.
+         *
+         * Non-admins may temporarily have
+         * no manager only when no eligible
+         * manager exists.
+         */
+        managerId:
+          isSelectedRoleAdmin
+            ? null
+            : managerId
+              ? Number(managerId)
+              : null,
       };
 
       if (password.trim()) {
-        data.password = password;
+        input.password =
+          password.trim();
       }
 
-      data.managerId = managerId
-        ? Number(managerId)
-        : null;
-
-      await api.patch(
-        `/users/${userId}`,
-        data,
+      await graphqlRequest<UpdateUserResponse>(
+        UPDATE_USER_MUTATION,
+        {
+          id: userId,
+          input,
+        },
       );
 
       router.push("/users");
     } catch (err: any) {
-      console.error(
-        "Unable to update user:",
-        err,
-      );
-
       const message =
-        err?.response?.data?.message;
+        err?.message ||
+        "Unable to update user.";
 
-      if (Array.isArray(message)) {
-        setError(message.join(", "));
-      } else {
-        setError(
-          message ||
-            "Unable to update user.",
-        );
-      }
+      setError(message);
     } finally {
       setSaving(false);
     }
@@ -332,7 +843,10 @@ export default function EditUserPage() {
   // LOADING
   // -----------------------------------
 
-  if (checkingAuth || loading) {
+  if (
+    checkingAuth ||
+    loading
+  ) {
     return (
       <DashboardLayout>
         <div className="page-loading">
@@ -348,11 +862,14 @@ export default function EditUserPage() {
   // SAFETY
   // -----------------------------------
 
-  if (!authorized || !user) {
+  if (
+    !authorized ||
+    !user
+  ) {
     return null;
   }
 
-    // -----------------------------------
+  // -----------------------------------
   // PAGE
   // -----------------------------------
 
@@ -428,7 +945,9 @@ export default function EditUserPage() {
                 placeholder="e.g. Ahmed Khan"
                 value={name}
                 onChange={(e) =>
-                  setName(e.target.value)
+                  setName(
+                    e.target.value,
+                  )
                 }
                 disabled={saving}
                 required
@@ -446,7 +965,9 @@ export default function EditUserPage() {
                 placeholder="e.g. ahmed@company.com"
                 value={email}
                 onChange={(e) =>
-                  setEmail(e.target.value)
+                  setEmail(
+                    e.target.value,
+                  )
                 }
                 disabled={saving}
                 required
@@ -455,198 +976,352 @@ export default function EditUserPage() {
           </div>
 
           {/* -------------------------------- */}
-{/* PASSWORD */}
-{/* -------------------------------- */}
+          {/* PASSWORD */}
+          {/* -------------------------------- */}
 
-<div className="edit-form-section">
-  <div className="form-group">
-    <label htmlFor="password">
-      New password
-    </label>
+          <div className="edit-form-section">
+            <div className="form-group">
+              <label htmlFor="password">
+                New password
+              </label>
 
-    <input
-      id="password"
-      type="password"
-      placeholder="Leave blank to keep current password"
-      value={password}
-      onChange={(e) =>
-        setPassword(e.target.value)
-      }
-      disabled={saving}
-    />
+              <input
+                id="password"
+                type="password"
+                placeholder="Leave blank to keep current password"
+                value={password}
+                onChange={(e) =>
+                  setPassword(
+                    e.target.value,
+                  )
+                }
+                disabled={saving}
+              />
 
-    <div className="field-help">
-      Leave blank if you do not want to
-      change the current password.
-    </div>
-  </div>
-</div>
-
-{/* -------------------------------- */}
-{/* ROLE */}
-{/* -------------------------------- */}
-
-<div className="edit-form-section">
-  <div className="form-group">
-    <label htmlFor="role">
-      Role
-    </label>
-
-    <div
-      id="role"
-      className="edit-role-display"
-    >
-      {user.role?.name || "No role"}
-    </div>
-
-    <div className="field-help">
-      The user's role is managed separately
-      and cannot be changed from this page.
-    </div>
-  </div>
-</div>
-
-{/* -------------------------------- */}
-{/* REPORTS TO */}
-{/* -------------------------------- */}
-
-<div className="edit-form-section">
-  <div className="form-group">
-    <label htmlFor="manager">
-      Reports To
-    </label>
-
-    {loadingManagers ? (
-      <div className="form-input edit-loading">
-        Loading managers...
-      </div>
-    ) : (
-      <select
-        id="manager"
-        className="form-input edit-manager-select"
-        value={managerId}
-        onChange={(e) =>
-          setManagerId(e.target.value)
-        }
-        disabled={saving}
-      >
-        <option value="">
-          Top level
-        </option>
-
-        {possibleManagers.map((manager) => (
-          <option
-            key={manager.id}
-            value={manager.id}
-          >
-            {manager.name} —{" "}
-            {manager.role?.name || "Manager"}
-          </option>
-        ))}
-      </select>
-    )}
-
-    <div className="field-help">
-      Select who this user reports to.
-      Leave as Top level if they do not
-      report to another user.
-    </div>
-  </div>
-</div>
-
-{/* -------------------------------- */}
-{/* HIERARCHY */}
-{/* -------------------------------- */}
-
-<div className="edit-form-section">
-  <div className="hierarchy-preview">
-
-    <div className="hierarchy-preview-header">
-      <div>
-        <div className="hierarchy-preview-title">
-          Current hierarchy
-        </div>
-
-        <div className="hierarchy-preview-subtitle">
-          Reporting relationship for this user
-        </div>
-      </div>
-    </div>
-
-    <div className="hierarchy-preview-body">
-
-      <div className="hierarchy-person">
-        <div className="hierarchy-avatar">
-          {user.name
-            .charAt(0)
-            .toUpperCase()}
-        </div>
-
-        <div className="hierarchy-person-info">
-          <div className="hierarchy-person-name">
-            {user.name}
+              <div className="field-help">
+                Leave blank if you do not want
+                to change the current password.
+              </div>
+            </div>
           </div>
 
-          <div className="hierarchy-person-role">
-            {user.role?.name || "No role"}
-          </div>
-        </div>
-      </div>
+          {/* -------------------------------- */}
+          {/* ROLE */}
+          {/* -------------------------------- */}
 
-      <div className="hierarchy-arrow">
-        →
-      </div>
+          <div className="edit-form-section">
+            <div className="form-group">
+              <label htmlFor="role">
+                Role
+              </label>
 
-      <div className="hierarchy-person">
-        <div className="hierarchy-avatar">
-          {managerId
-            ? (
-                possibleManagers.find(
-                  (manager) =>
-                    manager.id ===
-                    Number(managerId),
-                )?.name ||
-                user.manager?.name ||
-                "Manager"
-              )
-                .charAt(0)
-                .toUpperCase()
-            : "T"}
-        </div>
+              {canChangeRole ? (
+                loadingRoles ? (
+                  <div className="form-input edit-loading">
+                    Loading roles...
+                  </div>
+                ) : (
+                  <select
+                    id="role"
+                    className="form-input"
+                    value={
+                      selectedRoleId ?? ""
+                    }
+                    onChange={(e) =>
+                      handleRoleChange(
+                        Number(
+                          e.target.value,
+                        ),
+                      )
+                    }
+                    disabled={saving}
+                  >
+                    <option
+                      value=""
+                      disabled
+                    >
+                      Select role
+                    </option>
 
-        <div className="hierarchy-person-info">
-          <div className="hierarchy-person-name">
-            {managerId
-              ? (
-                  possibleManagers.find(
-                    (manager) =>
-                      manager.id ===
-                      Number(managerId),
-                  )?.name ||
-                  user.manager?.name ||
-                  "Selected manager"
+                    {roles.map(
+                      (role) => (
+                        <option
+                          key={role.id}
+                          value={role.id}
+                          disabled={
+                            !role.active
+                          }
+                        >
+                          {role.name}
+                          {!role.active
+                            ? " (Inactive)"
+                            : ""}
+                        </option>
+                      ),
+                    )}
+                  </select>
                 )
-              : "Top level"}
+              ) : (
+                <div className="edit-role-display">
+                  {user.role?.name ||
+                    "No role"}
+                </div>
+              )}
+
+              <div className="field-help">
+                {canChangeRole
+                  ? "Changing the role updates the user's reporting hierarchy."
+                  : "Only administrators can change a user's role."}
+              </div>
+            </div>
           </div>
 
-          <div className="hierarchy-person-role">
-            {managerId
-              ? (
-                  possibleManagers.find(
-                    (manager) =>
-                      manager.id ===
-                      Number(managerId),
-                  )?.role?.name ||
-                  "Manager"
-                )
-              : "No manager"}
-          </div>
-        </div>
-      </div>
+          {/* -------------------------------- */}
+          {/* ROLE HIERARCHY */}
+          {/* -------------------------------- */}
 
-    </div>
-  </div>
-</div>
+          <div className="edit-form-section">
+            <div className="form-group">
+              <label>
+                Role hierarchy
+              </label>
+
+              <div className="hierarchy-preview">
+                <div className="hierarchy-preview-body">
+                  <div>
+                    <div className="hierarchy-preview-title">
+                      {isSelectedRoleAdmin
+                        ? "This user is an administrator and will be at the top level."
+                        : selectedRole?.reportsToRole
+                          ? `This user will report to a ${selectedRole.reportsToRole.name}.`
+                          : "This role does not have a reporting role."}
+                    </div>
+
+                    <div className="hierarchy-preview-subtitle">
+                      {isSelectedRoleAdmin
+                        ? "Administrators do not report to another user."
+                        : selectedRole?.reportsToRole
+                          ? `The required reporting role is ${selectedRole.reportsToRole.name}.`
+                          : "The selected non-administrator role cannot be assigned without a reporting role."}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* -------------------------------- */}
+          {/* REPORTS TO */}
+          {/* -------------------------------- */}
+
+          {!isSelectedRoleAdmin &&
+            roleHasReportingRole && (
+              <div className="edit-form-section">
+                <div className="form-group">
+                  <label htmlFor="manager">
+                    Reports To
+                  </label>
+
+                  {loadingManagers ? (
+                    <div className="form-input edit-loading">
+                      Loading managers...
+                    </div>
+                  ) : possibleManagers.length ===
+                    0 ? (
+                    <>
+                      <div className="hierarchy-preview">
+                        <div className="hierarchy-preview-body">
+                          <div>
+                            <div className="hierarchy-preview-title">
+                              No active users currently
+                              exist with the required
+                              reporting role.
+                            </div>
+
+                            <div className="hierarchy-preview-subtitle">
+                              The user can be saved
+                              without a manager and
+                              assigned one later.
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="field-help">
+                        Only active users with the
+                        role required by{" "}
+                        {selectedRole?.name ||
+                          "the selected role"}{" "}
+                        are shown.
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <select
+                        id="manager"
+                        className="form-input edit-manager-select"
+                        value={managerId}
+                        onChange={(e) =>
+                          setManagerId(
+                            e.target.value,
+                          )
+                        }
+                        disabled={saving}
+                        required={
+                          managerRequired
+                        }
+                      >
+                        <option
+                          value=""
+                          disabled
+                        >
+                          Select{" "}
+                          {selectedRole
+                            ?.reportsToRole
+                            ?.name ||
+                            "manager"}
+                        </option>
+
+                        {possibleManagers.map(
+                          (manager) => (
+                            <option
+                              key={manager.id}
+                              value={manager.id}
+                            >
+                              {manager.name} —{" "}
+                              {manager.role
+                                ?.name ||
+                                "Manager"}
+                            </option>
+                          ),
+                        )}
+                      </select>
+
+                      <div className="field-help">
+                        Select an active user with
+                        the required{" "}
+                        {selectedRole
+                          ?.reportsToRole
+                          ?.name ||
+                          "reporting role"}{" "}
+                        role.
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+          {/* -------------------------------- */}
+          {/* ADMIN HIERARCHY */}
+          {/* -------------------------------- */}
+
+          {isSelectedRoleAdmin && (
+            <div className="edit-form-section">
+              <div className="hierarchy-preview">
+                <div className="hierarchy-preview-body">
+                  <div>
+                    <div className="hierarchy-preview-title">
+                      Top level
+                    </div>
+
+                    <div className="hierarchy-preview-subtitle">
+                      Administrators do not report
+                      to another user.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* -------------------------------- */}
+          {/* CURRENT HIERARCHY */}
+          {/* -------------------------------- */}
+
+          <div className="edit-form-section">
+            <div className="hierarchy-preview">
+              <div className="hierarchy-preview-header">
+                <div>
+                  <div className="hierarchy-preview-title">
+                    Current hierarchy
+                  </div>
+
+                  <div className="hierarchy-preview-subtitle">
+                    Reporting relationship for
+                    this user
+                  </div>
+                </div>
+              </div>
+
+              <div className="hierarchy-preview-body">
+                <div className="hierarchy-person">
+                  <div className="hierarchy-avatar">
+                    {user.name
+                      .charAt(0)
+                      .toUpperCase()}
+                  </div>
+
+                  <div className="hierarchy-person-info">
+                    <div className="hierarchy-person-name">
+                      {user.name}
+                    </div>
+
+                    <div className="hierarchy-person-role">
+                      {selectedRole?.name ||
+                        "No role"}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="hierarchy-arrow">
+                  →
+                </div>
+
+                <div className="hierarchy-person">
+                  <div className="hierarchy-avatar">
+                    {isSelectedRoleAdmin
+                      ? "A"
+                      : managerId
+                        ? (
+                            selectedManager?.name ||
+                            user.manager?.name ||
+                            "Manager"
+                          )
+                            .charAt(0)
+                            .toUpperCase()
+                        : "U"}
+                  </div>
+
+                  <div className="hierarchy-person-info">
+                    <div className="hierarchy-person-name">
+                      {isSelectedRoleAdmin
+                        ? "Top level"
+                        : managerId
+                          ? selectedManager?.name ||
+                            user.manager?.name ||
+                            "Selected manager"
+                          : "Unassigned"}
+                    </div>
+
+                    <div className="hierarchy-person-role">
+                      {isSelectedRoleAdmin
+                        ? "Administrator"
+                        : managerId
+                          ? selectedManager
+                              ?.role
+                              ?.name ||
+                            user.manager?.role
+                              ?.name ||
+                            "Manager"
+                          : "Manager not currently assigned"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* -------------------------------- */}
           {/* ACTIONS */}
           {/* -------------------------------- */}
@@ -668,7 +1343,8 @@ export default function EditUserPage() {
               className="button button-primary"
               disabled={
                 saving ||
-                loadingManagers
+                loadingManagers ||
+                loadingRoles
               }
             >
               {saving

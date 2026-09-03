@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import { api } from "@/lib/api";
+import { graphqlRequest } from "@/lib/graphql";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 
 type Permission = {
@@ -23,6 +23,70 @@ type Group = {
   permissions: GroupPermission[];
   roles: any[];
 };
+
+type GroupQueryResponse = {
+  group: Group;
+};
+
+type PermissionsQueryResponse = {
+  permissions: Permission[];
+};
+
+type UpdateGroupResponse = {
+  updateGroup: Group;
+};
+
+const GROUP_QUERY = `
+  query Group($id: Int!) {
+    group(id: $id) {
+      id
+      name
+      active
+      permissions {
+        groupId
+        permissionId
+        permission {
+          id
+          name
+        }
+      }
+      roles {
+        id
+        name
+        groupId
+        reportsToRoleId
+        active
+        isAdmin
+      }
+    }
+  }
+`;
+
+const PERMISSIONS_QUERY = `
+  query {
+    permissions {
+      id
+      name
+      parentId
+    }
+  }
+`;
+
+const UPDATE_GROUP_MUTATION = `
+  mutation UpdateGroup(
+    $id: Int!
+    $input: UpdateGroupInput!
+  ) {
+    updateGroup(
+      id: $id
+      input: $input
+    ) {
+      id
+      name
+      active
+    }
+  }
+`;
 
 export default function EditGroupPage() {
   const router = useRouter();
@@ -73,15 +137,23 @@ export default function EditGroupPage() {
       setError("");
 
       const [
-        groupResponse,
-        permissionsResponse,
+        groupData,
+        permissionsData,
       ] = await Promise.all([
-        api.get(`/groups/${groupId}`),
-        api.get("/roles/permissions"),
+        graphqlRequest<GroupQueryResponse>(
+          GROUP_QUERY,
+          {
+            id: groupId,
+          },
+        ),
+
+        graphqlRequest<PermissionsQueryResponse>(
+          PERMISSIONS_QUERY,
+        ),
       ]);
 
       const loadedGroup: Group =
-        groupResponse.data;
+        groupData.group;
 
       setGroup(loadedGroup);
 
@@ -97,7 +169,7 @@ export default function EditGroupPage() {
       );
 
       setPermissions(
-        permissionsResponse.data.filter(
+        permissionsData.permissions.filter(
           (permission: Permission) =>
             permission.parentId === null,
         ),
@@ -109,7 +181,7 @@ export default function EditGroupPage() {
       );
 
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to load group.",
       );
     } finally {
@@ -168,13 +240,16 @@ export default function EditGroupPage() {
     try {
       setSaving(true);
 
-      await api.patch(
-        `/groups/${groupId}`,
+      await graphqlRequest<UpdateGroupResponse>(
+        UPDATE_GROUP_MUTATION,
         {
-          name: name.trim(),
-          active,
-          permissionIds:
-            selectedPermissions,
+          id: groupId,
+          input: {
+            name: name.trim(),
+            active,
+            permissionIds:
+              selectedPermissions,
+          },
         },
       );
 
@@ -186,7 +261,7 @@ export default function EditGroupPage() {
       );
 
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to update group.",
       );
     } finally {

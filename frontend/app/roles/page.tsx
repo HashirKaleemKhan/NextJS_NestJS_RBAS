@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
-import { api } from "@/lib/api";
-import {logout } from "@/lib/auth";
+import { graphqlRequest } from "@/lib/graphql";
+import { logout } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 
 type Permission = {
@@ -13,6 +13,8 @@ type Permission = {
 };
 
 type RolePermission = {
+  roleId: number;
+  permissionId: number;
   permission: Permission;
 };
 
@@ -47,19 +49,107 @@ type Role = {
   permissions?: RolePermission[];
 };
 
+type RolesQueryResponse = {
+  roles: Role[];
+};
+
+type DeleteRoleResponse = {
+  deleteRole: {
+    message: string;
+  };
+};
+
+type ToggleRoleResponse = {
+  toggleRoleStatus: Role;
+};
+
+const ROLES_QUERY = `
+  query {
+    roles {
+      id
+      name
+      active
+      isAdmin
+      groupId
+      group {
+        id
+        name
+        active
+      }
+      reportsToRoleId
+      reportsToRole {
+        id
+        name
+      }
+      users {
+        id
+        name
+      }
+      permissions {
+        roleId
+        permissionId
+        permission {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
+
+const DELETE_ROLE_MUTATION = `
+  mutation DeleteRole($id: Int!) {
+    deleteRole(id: $id) {
+      message
+    }
+  }
+`;
+
+const TOGGLE_ROLE_STATUS_MUTATION = `
+  mutation ToggleRoleStatus($id: Int!) {
+    toggleRoleStatus(id: $id) {
+      id
+      name
+      active
+      isAdmin
+      groupId
+      group {
+        id
+        name
+        active
+      }
+      reportsToRoleId
+      reportsToRole {
+        id
+        name
+      }
+      users {
+        id
+        name
+      }
+      permissions {
+        roleId
+        permissionId
+        permission {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
+
 export default function RolesPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
 
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] =
+    useState("");
 
-  // -----------------------------------
-  // SUCCESS MESSAGE
-  // -----------------------------------
-
-  const success = searchParams.get("success");
+  const successStorageChecked =
+    useRef(false);
 
   // -----------------------------------
   // LOAD ROLES
@@ -72,26 +162,62 @@ export default function RolesPage() {
       router.replace("/login");
       return;
     }
+
     loadRoles();
   }, []);
 
   // -----------------------------------
-  // HANDLE SUCCESS MESSAGE
+  // READ SUCCESS MESSAGE FROM
+  // CREATE / EDIT
   // -----------------------------------
 
   useEffect(() => {
-    if (!success) {
+    /*
+     * In development, React Strict Mode can
+     * run an effect more than once.
+     *
+     * This ref prevents us from consuming
+     * sessionStorage twice.
+     */
+    if (successStorageChecked.current) {
       return;
     }
 
-    const timer = setTimeout(() => {
-      router.replace("/roles");
+    successStorageChecked.current = true;
+
+    const storedMessage =
+      sessionStorage.getItem(
+        "rolesSuccessMessage",
+      );
+
+    if (!storedMessage) {
+      return;
+    }
+
+    sessionStorage.removeItem(
+      "rolesSuccessMessage",
+    );
+
+    setSuccessMessage(storedMessage);
+  }, []);
+
+  // -----------------------------------
+  // SUCCESS MESSAGE TIMER
+  // -----------------------------------
+
+  useEffect(() => {
+    if (!successMessage) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setSuccessMessage("");
     }, 3500);
 
     return () => {
-      clearTimeout(timer);
+      window.clearTimeout(timer);
     };
-  }, [success, router]);
+  }, [successMessage]);
 
   // -----------------------------------
   // LOAD ROLES
@@ -102,12 +228,15 @@ export default function RolesPage() {
       setLoading(true);
       setError("");
 
-      const response = await api.get("/roles");
+      const data =
+        await graphqlRequest<RolesQueryResponse>(
+          ROLES_QUERY,
+        );
 
-      setRoles(response.data);
+      setRoles(data.roles);
     } catch (err: any) {
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to load roles.",
       );
     } finally {
@@ -131,16 +260,21 @@ export default function RolesPage() {
     try {
       setError("");
 
-      await api.delete(`/roles/${role.id}`);
+      await graphqlRequest<DeleteRoleResponse>(
+        DELETE_ROLE_MUTATION,
+        {
+          id: role.id,
+        },
+      );
 
       await loadRoles();
 
-      router.replace(
-        "/roles?success=deleted",
+      setSuccessMessage(
+        "Role deleted successfully.",
       );
     } catch (err: any) {
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to delete role.",
       );
     }
@@ -154,50 +288,26 @@ export default function RolesPage() {
     try {
       setError("");
 
-      await api.patch(
-        `/roles/${role.id}/status`,
-      );
+      const response =
+        await graphqlRequest<ToggleRoleResponse>(
+          TOGGLE_ROLE_STATUS_MUTATION,
+          {
+            id: role.id,
+          },
+        );
 
       await loadRoles();
 
-      router.replace(
-        `/roles?success=${
-          role.active
-            ? "deactivated"
-            : "activated"
-        }`,
+      setSuccessMessage(
+        response.toggleRoleStatus.active
+          ? "Role activated successfully."
+          : "Role deactivated successfully.",
       );
     } catch (err: any) {
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to update role status.",
       );
-    }
-  }
-
-  // -----------------------------------
-  // SUCCESS MESSAGE TEXT
-  // -----------------------------------
-
-  function getSuccessMessage() {
-    switch (success) {
-      case "created":
-        return "Role created successfully.";
-
-      case "updated":
-        return "Role updated successfully.";
-
-      case "deleted":
-        return "Role deleted successfully.";
-
-      case "activated":
-        return "Role activated successfully.";
-
-      case "deactivated":
-        return "Role deactivated successfully.";
-
-      default:
-        return "";
     }
   }
 
@@ -256,6 +366,7 @@ export default function RolesPage() {
           </div>
 
           <div className="page-header-actions">
+
             <button
               className="button button-primary"
               onClick={() =>
@@ -266,12 +377,14 @@ export default function RolesPage() {
             >
               + Create role
             </button>
+
             <button
-            className="button button-secondary"
-            onClick={logout}
-          >
-            Logout
-          </button>
+              className="button button-secondary"
+              onClick={logout}
+            >
+              Logout
+            </button>
+
           </div>
         </div>
 
@@ -279,9 +392,9 @@ export default function RolesPage() {
         {/* SUCCESS */}
         {/* -------------------------------- */}
 
-        {success && getSuccessMessage() && (
+        {successMessage && (
           <div className="groups-alert groups-alert-success">
-            ✓ {getSuccessMessage()}
+            ✓ {successMessage}
           </div>
         )}
 
@@ -306,7 +419,9 @@ export default function RolesPage() {
           {/* TOTAL */}
 
           <div className="stat-card stat-card-total">
+
             <div className="stat-card-content">
+
               <span className="stat-card-label">
                 Total
               </span>
@@ -318,13 +433,17 @@ export default function RolesPage() {
               <span className="stat-card-description">
                 Total roles
               </span>
+
             </div>
+
           </div>
 
           {/* ACTIVE */}
 
           <div className="stat-card stat-card-active">
+
             <div className="stat-card-content">
+
               <span className="stat-card-label">
                 Active
               </span>
@@ -336,13 +455,17 @@ export default function RolesPage() {
               <span className="stat-card-description">
                 Available roles
               </span>
+
             </div>
+
           </div>
 
           {/* INACTIVE */}
 
           <div className="stat-card stat-card-inactive">
+
             <div className="stat-card-content">
+
               <span className="stat-card-label">
                 Inactive
               </span>
@@ -354,7 +477,9 @@ export default function RolesPage() {
               <span className="stat-card-description">
                 Disabled roles
               </span>
+
             </div>
+
           </div>
 
         </div>
@@ -549,6 +674,7 @@ export default function RolesPage() {
                         {/* PERMISSIONS */}
 
                         <td>
+
                           {role.isAdmin ? (
                             <span className="group-permission-chip">
                               Full access
@@ -561,34 +687,43 @@ export default function RolesPage() {
                                 gap: "6px",
                               }}
                             >
+
                               {role.permissions &&
                               role.permissions.length > 0 ? (
                                 Array.from(
                                   new Set(
                                     role.permissions.map(
                                       ({ permission }) =>
-                                        permission.name.split(".")[0],
+                                        permission.name.split(
+                                          ".",
+                                        )[0],
                                     ),
                                   ),
-                                ).map((parentName) => (
-                                  <span
-                                    key={parentName}
-                                    className="group-permission-chip"
-                                  >
-                                    {parentName.replace(
-                                      /^./,
-                                      (char) =>
-                                        char.toUpperCase(),
-                                    )}
-                                  </span>
-                                ))
+                                ).map(
+                                  (parentName) => (
+                                    <span
+                                      key={
+                                        parentName
+                                      }
+                                      className="group-permission-chip"
+                                    >
+                                      {parentName.replace(
+                                        /^./,
+                                        (char) =>
+                                          char.toUpperCase(),
+                                      )}
+                                    </span>
+                                  ),
+                                )
                               ) : (
                                 <span>
                                   No permissions
                                 </span>
                               )}
+
                             </div>
                           )}
+
                         </td>
 
                         {/* STATUS */}

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { api } from "@/lib/api";
+import { graphqlRequest } from "@/lib/graphql";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 
 type Permission = {
@@ -11,6 +11,38 @@ type Permission = {
   name: string;
   parentId: number | null;
 };
+
+type PermissionsQueryResponse = {
+  permissions: Permission[];
+};
+
+type CreateGroupResponse = {
+  createGroup: {
+    id: number;
+    name: string;
+    active: boolean;
+  };
+};
+
+const PERMISSIONS_QUERY = `
+  query {
+    permissions {
+      id
+      name
+      parentId
+    }
+  }
+`;
+
+const CREATE_GROUP_MUTATION = `
+  mutation CreateGroup($input: CreateGroupInput!) {
+    createGroup(input: $input) {
+      id
+      name
+      active
+    }
+  }
+`;
 
 export default function CreateGroupPage() {
   const router = useRouter();
@@ -44,20 +76,20 @@ export default function CreateGroupPage() {
 
   async function loadPermissions() {
     try {
-      const response =
-        await api.get(
-          "/roles/permissions",
+      const data =
+        await graphqlRequest<PermissionsQueryResponse>(
+          PERMISSIONS_QUERY,
         );
 
       setPermissions(
-        response.data.filter(
+        data.permissions.filter(
           (permission: Permission) =>
             permission.parentId === null,
         ),
       );
     } catch (err: any) {
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to load permissions.",
       );
     } finally {
@@ -116,17 +148,22 @@ export default function CreateGroupPage() {
     try {
       setSaving(true);
 
-      await api.post("/groups", {
-        name: name.trim(),
-        active,
-        permissionIds:
-          selectedPermissions,
-      });
+      await graphqlRequest<CreateGroupResponse>(
+        CREATE_GROUP_MUTATION,
+        {
+          input: {
+            name: name.trim(),
+            active,
+            permissionIds:
+              selectedPermissions,
+          },
+        },
+      );
 
       router.push("/groups?success=created");
     } catch (err: any) {
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to create group.",
       );
     } finally {

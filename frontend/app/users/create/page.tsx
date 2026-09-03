@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { api } from "@/lib/api";
+import { graphqlRequest } from "@/lib/graphql";
 import { getUser } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 
@@ -41,6 +41,68 @@ type CurrentUser = {
   role?: string;
   permissions?: string[];
 };
+
+type RolesForUserCreationResponse = {
+  rolesForUserCreation: Role[];
+};
+
+type PossibleManagersResponse = {
+  possibleManagersForRole: Manager[];
+};
+
+type CreateUserResponse = {
+  createUser: {
+    id: number;
+    name: string;
+    email: string;
+  };
+};
+
+const ROLES_FOR_USER_CREATION_QUERY = `
+  query {
+    rolesForUserCreation {
+      id
+      name
+      isAdmin
+      active
+      reportsToRoleId
+
+      reportsToRole {
+        id
+        name
+        isAdmin
+        active
+      }
+    }
+  }
+`;
+
+const POSSIBLE_MANAGERS_QUERY = `
+  query PossibleManagersForRole($roleId: Int!) {
+    possibleManagersForRole(roleId: $roleId) {
+      id
+      name
+      email
+
+      role {
+        id
+        name
+        isAdmin
+        active
+      }
+    }
+  }
+`;
+
+const CREATE_USER_MUTATION = `
+  mutation CreateUser($input: CreateUserInput!) {
+    createUser(input: $input) {
+      id
+      name
+      email
+    }
+  }
+`;
 
 export default function CreateUserPage() {
   const router = useRouter();
@@ -158,30 +220,20 @@ export default function CreateUserPage() {
       setError("");
 
       try {
-        const response =
-          await api.get("/roles");
-
-        /*
-         * The backend is the source of truth
-         * for administrator status.
-         *
-         * Do NOT use role.level here.
-         *
-         * Admin roles are excluded because the
-         * current UsersService does not allow
-         * administrators to create another
-         * administrator.
-         */
+        const data =
+          await graphqlRequest<RolesForUserCreationResponse>(
+            ROLES_FOR_USER_CREATION_QUERY,
+          );
 
         const availableRoles =
-          response.data
+          data.rolesForUserCreation
             .filter(
-              (role: Role) =>
+              (role) =>
                 !role.isAdmin &&
                 role.active,
             )
             .sort(
-              (a: Role, b: Role) =>
+              (a, b) =>
                 a.name.localeCompare(
                   b.name,
                 ),
@@ -189,13 +241,8 @@ export default function CreateUserPage() {
 
         setRoles(availableRoles);
       } catch (err: any) {
-        console.error(
-          "Unable to load roles:",
-          err,
-        );
-
         setError(
-          err?.response?.data?.message ||
+          err?.message ||
             "Unable to load available roles.",
         );
       } finally {
@@ -248,24 +295,22 @@ export default function CreateUserPage() {
       setManagerId("");
 
       try {
-        const response =
-          await api.get(
-            `/users/possible-managers-for-role/${roleId}`,
+        const data =
+          await graphqlRequest<PossibleManagersResponse>(
+            POSSIBLE_MANAGERS_QUERY,
+            {
+              roleId: Number(roleId),
+            },
           );
 
         setPossibleManagers(
-          response.data,
+          data.possibleManagersForRole,
         );
       } catch (err: any) {
-        console.error(
-          "Unable to load managers:",
-          err,
-        );
-
         setPossibleManagers([]);
 
         setError(
-          err?.response?.data?.message ||
+          err?.message ||
             "Unable to load possible managers.",
         );
       } finally {
@@ -330,15 +375,6 @@ export default function CreateUserPage() {
     // ADMIN ROLE
     // -----------------------------------
 
-    /*
-     * Admin users never have a manager.
-     *
-     * Currently admin roles are not exposed
-     * in the create form, but keep this logic
-     * here so the request remains consistent
-     * with the backend.
-     */
-
     if (selectedRole.isAdmin) {
       setManagerId("");
     }
@@ -346,23 +382,6 @@ export default function CreateUserPage() {
     // -----------------------------------
     // NORMAL ROLE
     // -----------------------------------
-
-    /*
-     * A normal role must have a reporting
-     * role defined.
-     *
-     * However, the backend currently allows
-     * managerId = null when no matching manager
-     * exists yet.
-     *
-     * Therefore:
-     *
-     * - If managers exist -> user should select one.
-     * - If no managers exist -> allow creation
-     *   without a manager.
-     *
-     * The backend remains the final authority.
-     */
 
     if (
       !selectedRole.isAdmin &&
@@ -379,40 +398,39 @@ export default function CreateUserPage() {
     setLoading(true);
 
     try {
-      await api.post("/users", {
-        name: name.trim(),
+      await graphqlRequest<CreateUserResponse>(
+        CREATE_USER_MUTATION,
+        {
+          input: {
+            name: name.trim(),
 
-        email: email
-          .trim()
-          .toLowerCase(),
+            email: email
+              .trim()
+              .toLowerCase(),
 
-        password,
+            password,
 
-        roleId: Number(roleId),
+            roleId: Number(roleId),
 
-        managerId:
-          selectedRole.isAdmin
-            ? null
-            : managerId
-              ? Number(managerId)
-              : null,
-      });
+            managerId:
+              selectedRole.isAdmin
+                ? null
+                : managerId
+                  ? Number(managerId)
+                  : null,
+          },
+        },
+      );
 
       router.push("/users");
     } catch (err: any) {
       const message =
-        err?.response?.data?.message;
+        err?.message;
 
-      if (Array.isArray(message)) {
-        setError(
-          message.join(", "),
-        );
-      } else {
-        setError(
-          message ||
-            "Unable to create user.",
-        );
-      }
+      setError(
+        message ||
+          "Unable to create user.",
+      );
     } finally {
       setLoading(false);
     }

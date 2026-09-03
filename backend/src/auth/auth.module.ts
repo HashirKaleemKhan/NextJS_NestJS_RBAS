@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PermissionsGuard } from './guards/permissions/permissions.guard';
 
 import { AuthController } from './auth.controller';
+import { AuthResolver } from './graphql/auth.resolver';
 import { AuthService } from './auth.service';
 import { UsersModule } from '../users/users.module';
 import { JwtStrategy } from './strategies/jwt.strategy/jwt.strategy';
@@ -25,6 +26,7 @@ import { JwtStrategy } from './strategies/jwt.strategy/jwt.strategy';
   AuthService,
   JwtStrategy,
   PermissionsGuard,
+  AuthResolver,
 ],
 })
 export class AuthModule {}

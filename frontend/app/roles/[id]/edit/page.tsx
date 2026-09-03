@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import { api } from "@/lib/api";
+import { graphqlRequest } from "@/lib/graphql";
 import { getUser, logout } from "@/lib/auth";
 
 import DashboardLayout from "@/components/layouts/DashboardLayout";
@@ -25,9 +25,36 @@ type Role = {
   reportsToRoleId: number | null;
 
   permissions?: {
+    roleId: number;
+    permissionId: number;
     permission: Permission;
   }[];
 };
+
+type RoleQueryResponse = {
+  role: Role;
+};
+
+const ROLE_QUERY = `
+  query Role($id: Int!) {
+    role(id: $id) {
+      id
+      name
+      active
+      isAdmin
+      groupId
+      reportsToRoleId
+      permissions {
+        roleId
+        permissionId
+        permission {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
 
 export default function EditRolePage() {
   const router = useRouter();
@@ -35,7 +62,6 @@ export default function EditRolePage() {
   const params = useParams();
 
   const roleId = params.id;
-  ;
 
   const [role, setRole] =
     useState<Role | null>(null);
@@ -81,15 +107,24 @@ export default function EditRolePage() {
       setLoading(true);
       setError("");
 
-      const response =
-        await api.get(
-          `/roles/${roleId}`,
+      const data =
+        await graphqlRequest<RoleQueryResponse>(
+          ROLE_QUERY,
+          {
+            id: Number(roleId),
+          },
         );
 
-      setRole(response.data);
+      setRole(data.role);
     } catch (err: any) {
+      const message =
+        err?.message ||
+        "Unable to load role.";
+
       if (
-        err?.response?.status === 404
+        message
+          .toLowerCase()
+          .includes("not found")
       ) {
         setError(
           "Role not found.",
@@ -97,24 +132,7 @@ export default function EditRolePage() {
         return;
       }
 
-      if (
-        err?.response?.status === 401
-      ) {
-        router.replace("/login");
-        return;
-      }
-
-      if (
-        err?.response?.status === 403
-      ) {
-        router.replace("/dashboard");
-        return;
-      }
-
-      setError(
-        err?.response?.data?.message ||
-          "Unable to load role.",
-      );
+      setError(message);
     } finally {
       setLoading(false);
     }

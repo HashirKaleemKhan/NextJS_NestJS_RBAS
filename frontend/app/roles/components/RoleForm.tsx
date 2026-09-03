@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { graphqlRequest } from "@/lib/graphql";
 
 type Permission = {
   id: number;
@@ -28,6 +28,8 @@ type Role = {
   active: boolean;
   isAdmin: boolean;
   permissions?: {
+    roleId: number;
+    permissionId: number;
     permission: Permission;
   }[];
 };
@@ -45,6 +47,126 @@ type RoleFormProps = {
   role?: Role | null;
   onSuccess: (message: string) => void;
 };
+
+type GroupsQueryResponse = {
+  groups: Group[];
+};
+
+type RolesQueryResponse = {
+  roles: Role[];
+};
+
+type GroupPermissionsQueryResponse = {
+  groupPermissions: GroupPermission[];
+};
+
+type CreateRoleResponse = {
+  createRole: Role;
+};
+
+type UpdateRoleResponse = {
+  updateRole: Role;
+};
+
+const GROUPS_QUERY = `
+  query {
+    groups {
+      id
+      name
+      active
+    }
+  }
+`;
+
+const ROLES_QUERY = `
+  query {
+    roles {
+      id
+      name
+      groupId
+      reportsToRoleId
+      active
+      isAdmin
+      permissions {
+        roleId
+        permissionId
+        permission {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
+
+const GROUP_PERMISSIONS_QUERY = `
+  query GroupPermissions($groupId: Int!) {
+    groupPermissions(groupId: $groupId) {
+      id
+      name
+      children {
+        id
+        name
+      }
+    }
+  }
+`;
+
+const CREATE_ROLE_MUTATION = `
+  mutation CreateRole(
+    $name: String!
+    $groupId: Int
+    $reportsToRoleId: Int
+    $active: Boolean
+    $isAdmin: Boolean
+    $permissionIds: [Int!]
+  ) {
+    createRole(
+      name: $name
+      groupId: $groupId
+      reportsToRoleId: $reportsToRoleId
+      active: $active
+      isAdmin: $isAdmin
+      permissionIds: $permissionIds
+    ) {
+      id
+      name
+      groupId
+      reportsToRoleId
+      active
+      isAdmin
+    }
+  }
+`;
+
+const UPDATE_ROLE_MUTATION = `
+  mutation UpdateRole(
+    $id: Int!
+    $name: String
+    $groupId: Int
+    $reportsToRoleId: Int
+    $active: Boolean
+    $isAdmin: Boolean
+    $permissionIds: [Int!]
+  ) {
+    updateRole(
+      id: $id
+      name: $name
+      groupId: $groupId
+      reportsToRoleId: $reportsToRoleId
+      active: $active
+      isAdmin: $isAdmin
+      permissionIds: $permissionIds
+    ) {
+      id
+      name
+      groupId
+      reportsToRoleId
+      active
+      isAdmin
+    }
+  }
+`;
 
 export default function RoleForm({
   mode,
@@ -133,15 +255,19 @@ export default function RoleForm({
         groupsResponse,
         rolesResponse,
       ] = await Promise.all([
-        api.get("/roles/groups"),
-        api.get("/roles"),
+        graphqlRequest<GroupsQueryResponse>(
+          GROUPS_QUERY,
+        ),
+        graphqlRequest<RolesQueryResponse>(
+          ROLES_QUERY,
+        ),
       ]);
 
-      setGroups(groupsResponse.data);
-      setRoles(rolesResponse.data);
+      setGroups(groupsResponse.groups);
+      setRoles(rolesResponse.roles);
     } catch (err: any) {
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to load role data.",
       );
     } finally {
@@ -161,12 +287,14 @@ export default function RoleForm({
       setLoadingPermissions(true);
       setError("");
 
-      const response = await api.get(
-        `/roles/groups/${groupId}/permissions`,
-      );
+      const response =
+        await graphqlRequest<GroupPermissionsQueryResponse>(
+          GROUP_PERMISSIONS_QUERY,
+          { groupId },
+        );
 
       const groupPermissions =
-        response.data as GroupPermission[];
+        response.groupPermissions as GroupPermission[];
 
       setAvailablePermissions(
         groupPermissions,
@@ -199,7 +327,7 @@ export default function RoleForm({
       setExpandedPermissionGroup(null);
 
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to load group permissions.",
       );
     } finally {
@@ -394,8 +522,8 @@ export default function RoleForm({
       };
 
       if (mode === "create") {
-        await api.post(
-          "/roles",
+        await graphqlRequest<CreateRoleResponse>(
+          CREATE_ROLE_MUTATION,
           payload,
         );
 
@@ -412,9 +540,12 @@ export default function RoleForm({
         );
       }
 
-      await api.patch(
-        `/roles/${role.id}`,
-        payload,
+      await graphqlRequest<UpdateRoleResponse>(
+        UPDATE_ROLE_MUTATION,
+        {
+          id: role.id,
+          ...payload,
+        },
       );
 
       onSuccess(
@@ -422,7 +553,7 @@ export default function RoleForm({
       );
     } catch (err: any) {
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to save role.",
       );
     } finally {
@@ -458,182 +589,183 @@ export default function RoleForm({
       )}
 
       {/* ----------------------------------- */}
-{/* ROLE SETTINGS */}
-{/* ----------------------------------- */}
+      {/* ROLE SETTINGS */}
+      {/* ----------------------------------- */}
 
-<div className="role-settings-grid">
+      <div className="role-settings-grid">
 
-  {/* ROLE NAME */}
+        {/* ROLE NAME */}
 
-  <div className="form-group">
-    <label htmlFor="role-name">
-      Role name
-    </label>
+        <div className="form-group">
+          <label htmlFor="role-name">
+            Role name
+          </label>
 
-    <input
-      id="role-name"
-      type="text"
-      value={form.name}
-      onChange={(event) =>
-        setForm((current) => ({
-          ...current,
-          name: event.target.value,
-        }))
-      }
-      placeholder="e.g. HR Manager"
-      disabled={saving}
-    />
-  </div>
+          <input
+            id="role-name"
+            type="text"
+            value={form.name}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                name: event.target.value,
+              }))
+            }
+            placeholder="e.g. HR Manager"
+            disabled={saving}
+          />
+        </div>
 
-  {/* GROUP */}
+        {/* GROUP */}
 
-  <div className="form-group">
-    <label htmlFor="role-group">
-      Group
-    </label>
+        <div className="form-group">
+          <label htmlFor="role-group">
+            Group
+          </label>
 
-    <select
-      id="role-group"
-      value={form.groupId ?? ""}
-      onChange={(event) => {
-        const value = event.target.value;
+          <select
+            id="role-group"
+            value={form.groupId ?? ""}
+            onChange={(event) => {
+              const value = event.target.value;
 
-        handleGroupChange(
-          value ? Number(value) : null,
-        );
-      }}
-      disabled={
-        saving ||
-        form.isAdmin
-      }
-    >
-      <option value="">
-        Select a group
-      </option>
-
-      {groups.map((group) => (
-        <option
-          key={group.id}
-          value={group.id}
-        >
-          {group.name}
-        </option>
-      ))}
-    </select>
-  </div>
-
-  {/* REPORTS TO */}
-
-  {!form.isAdmin && (
-    <div className="form-group">
-      <label htmlFor="role-reports-to">
-        Reports to
-      </label>
-
-      <select
-        id="role-reports-to"
-        value={
-          form.reportsToRoleId ?? ""
-        }
-        onChange={(event) => {
-          const value =
-            event.target.value;
-
-          setForm((current) => ({
-            ...current,
-            reportsToRoleId:
-              value
-                ? Number(value)
-                : null,
-          }));
-        }}
-        disabled={saving}
-      >
-        <option value="">
-          Select reporting role
-        </option>
-
-        {roles
-          .filter(
-            (item) =>
-              item.id !== role?.id,
-          )
-          .map((item) => (
-            <option
-              key={item.id}
-              value={item.id}
-            >
-              {item.name}
+              handleGroupChange(
+                value ? Number(value) : null,
+              );
+            }}
+            disabled={
+              saving ||
+              form.isAdmin
+            }
+          >
+            <option value="">
+              Select a group
             </option>
-          ))}
-      </select>
 
-      <small>
-        Users with this role must report
-        to a user with the selected role.
-      </small>
-    </div>
-  )}
+            {groups.map((group) => (
+              <option
+                key={group.id}
+                value={group.id}
+              >
+                {group.name}
+              </option>
+            ))}
+          </select>
+        </div>
 
-  {/* ACTIVE */}
+        {/* REPORTS TO */}
 
-  {!form.isAdmin && (
-    <div className="role-status-box">
-      <label className="permission-option">
-        <input
-          type="checkbox"
-          checked={form.active}
-          onChange={(event) =>
-            setForm((current) => ({
-              ...current,
-              active:
+        {!form.isAdmin && (
+          <div className="form-group">
+            <label htmlFor="role-reports-to">
+              Reports to
+            </label>
+
+            <select
+              id="role-reports-to"
+              value={
+                form.reportsToRoleId ?? ""
+              }
+              onChange={(event) => {
+                const value =
+                  event.target.value;
+
+                setForm((current) => ({
+                  ...current,
+                  reportsToRoleId:
+                    value
+                      ? Number(value)
+                      : null,
+                }));
+              }}
+              disabled={saving}
+            >
+              <option value="">
+                Select reporting role
+              </option>
+
+              {roles
+                .filter(
+                  (item) =>
+                    item.id !== role?.id,
+                )
+                .map((item) => (
+                  <option
+                    key={item.id}
+                    value={item.id}
+                  >
+                    {item.name}
+                  </option>
+                ))}
+            </select>
+
+            <small>
+              Users with this role must report
+              to a user with the selected role.
+            </small>
+          </div>
+        )}
+
+        {/* ACTIVE */}
+
+        {!form.isAdmin && (
+          <div className="role-status-box">
+            <label className="permission-option">
+              <input
+                type="checkbox"
+                checked={form.active}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    active:
+                      event.target.checked,
+                  }))
+                }
+                disabled={saving}
+              />
+
+              <span>Active</span>
+            </label>
+
+            <p className="form-help">
+              Inactive roles cannot be assigned
+              to new users.
+            </p>
+          </div>
+        )}
+
+      </div>
+
+      {/* ----------------------------------- */}
+      {/* ADMINISTRATOR */}
+      {/* ----------------------------------- */}
+
+      <div className="role-admin-box">
+
+        <label className="permission-option">
+          <input
+            type="checkbox"
+            checked={form.isAdmin}
+            onChange={(event) =>
+              handleAdminChange(
                 event.target.checked,
-            }))
-          }
-          disabled={saving}
-        />
+              )
+            }
+            disabled={saving}
+          />
 
-        <span>Active</span>
-      </label>
+          <span>
+            Administrator role
+          </span>
+        </label>
 
-      <p className="form-help">
-        Inactive roles cannot be assigned
-        to new users.
-      </p>
-    </div>
-  )}
+        <p className="form-help">
+          Administrator roles bypass normal
+          group permission assignment.
+        </p>
 
-</div>
+      </div>
 
-{/* ----------------------------------- */}
-{/* ADMINISTRATOR */}
-{/* ----------------------------------- */}
-
-<div className="role-admin-box">
-
-  <label className="permission-option">
-    <input
-      type="checkbox"
-      checked={form.isAdmin}
-      onChange={(event) =>
-        handleAdminChange(
-          event.target.checked,
-        )
-      }
-      disabled={saving}
-    />
-
-    <span>
-      Administrator role
-    </span>
-  </label>
-
-  <p className="form-help">
-    Administrator roles bypass normal
-    group permission assignment.
-  </p>
-
-</div>
       {/* -------------------------------- */}
       {/* PERMISSIONS */}
       {/* -------------------------------- */}

@@ -11,7 +11,6 @@ import { RolesModule } from './roles/roles.module';
 import { GroupsModule } from './groups/groups.module';
 import { GraphQLModule } from './graphql/graphql.module';
 
-
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -19,10 +18,11 @@ import { GraphQLModule } from './graphql/graphql.module';
     }),
 
     NestGraphQLModule.forRoot<ApolloDriverConfig>({
-  driver: ApolloDriver,
-  autoSchemaFile: true,
-  csrfPrevention: false,
-}),
+      driver: ApolloDriver,
+      autoSchemaFile: true,
+      csrfPrevention: false,
+      context: ({ req }) => ({ req }),
+    }),
 
     PrismaModule,
     UsersModule,

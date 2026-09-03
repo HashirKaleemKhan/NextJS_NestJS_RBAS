@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { api } from "@/lib/api";
+import { graphqlRequest } from "@/lib/graphql";
 import { getUser, logout } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import "../roles/roles.css";
@@ -14,14 +14,21 @@ type User = {
   email: string;
 
   role?: {
+    id: number;
     name: string;
-    level?: number;
+    isAdmin: boolean;
     active: boolean;
   };
 
   manager?: {
     id: number;
     name: string;
+    role?: {
+      id: number;
+      name: string;
+      isAdmin: boolean;
+      active: boolean;
+    };
   } | null;
 };
 
@@ -31,6 +38,53 @@ type CurrentUser = {
   role?: string;
   permissions?: string[];
 };
+
+type UsersQueryResponse = {
+  users: User[];
+};
+
+type DeleteUserResponse = {
+  deleteUser: {
+    message: string;
+  };
+};
+
+const USERS_QUERY = `
+  query {
+    users {
+      id
+      name
+      email
+
+      role {
+        id
+        name
+        isAdmin
+        active
+      }
+
+      manager {
+        id
+        name
+
+        role {
+          id
+          name
+          isAdmin
+          active
+        }
+      }
+    }
+  }
+`;
+
+const DELETE_USER_MUTATION = `
+  mutation DeleteUser($id: Int!) {
+    deleteUser(id: $id) {
+      message
+    }
+  }
+`;
 
 export default function UsersPage() {
   const router = useRouter();
@@ -64,16 +118,30 @@ export default function UsersPage() {
 
     async function loadUsers() {
       try {
-        const response = await api.get("/users");
+        const data =
+          await graphqlRequest<UsersQueryResponse>(
+            USERS_QUERY,
+          );
 
-        setUsers(response.data);
+        setUsers(data.users);
       } catch (err: any) {
-        if (err?.response?.status === 401) {
+        const message =
+          err?.message || "";
+
+        if (
+          message
+            .toLowerCase()
+            .includes("unauthorized")
+        ) {
           router.replace("/login");
           return;
         }
 
-        if (err?.response?.status === 403) {
+        if (
+          message
+            .toLowerCase()
+            .includes("forbidden")
+        ) {
           router.replace("/dashboard");
           return;
         }
@@ -131,7 +199,10 @@ export default function UsersPage() {
     }
 
     try {
-      await api.delete(`/users/${user.id}`);
+      await graphqlRequest<DeleteUserResponse>(
+        DELETE_USER_MUTATION,
+        { id: user.id },
+      );
 
       setUsers((currentUsers) =>
         currentUsers.filter(
@@ -141,7 +212,7 @@ export default function UsersPage() {
       );
     } catch (err: any) {
       alert(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to delete user.",
       );
     }
@@ -253,56 +324,56 @@ export default function UsersPage() {
         {/* TOTAL */}
 
         <div className="stat-card stat-card-total">
-            <div className="stat-card-content">
-              <span className="stat-card-label">
-                Total Users
-              </span>
+          <div className="stat-card-content">
+            <span className="stat-card-label">
+              Total Users
+            </span>
 
-              <strong className="stat-card-value">
-                {totalUsers}
-              </strong>
+            <strong className="stat-card-value">
+              {totalUsers}
+            </strong>
 
-              <span className="stat-card-description">
-                Users in your management scope
-              </span>
-            </div>
+            <span className="stat-card-description">
+              Users in your management scope
+            </span>
           </div>
+        </div>
 
         {/* ACTIVE */}
 
-          <div className="stat-card stat-card-active">
-            <div className="stat-card-content">
-              <span className="stat-card-label">
-                Active
-              </span>
+        <div className="stat-card stat-card-active">
+          <div className="stat-card-content">
+            <span className="stat-card-label">
+              Active
+            </span>
 
-              <strong className="stat-card-value">
-                {activeUsers}
-              </strong>
+            <strong className="stat-card-value">
+              {activeUsers}
+            </strong>
 
-              <span className="stat-card-description">
-                Active Users
-              </span>
-            </div>
+            <span className="stat-card-description">
+              Active Users
+            </span>
           </div>
+        </div>
 
-          {/* INACTIVE */}
+        {/* INACTIVE */}
 
-          <div className="stat-card stat-card-inactive">
-            <div className="stat-card-content">
-              <span className="stat-card-label">
-                Inactive
-              </span>
+        <div className="stat-card stat-card-inactive">
+          <div className="stat-card-content">
+            <span className="stat-card-label">
+              Inactive
+            </span>
 
-              <strong className="stat-card-value">
-                {inactiveUsers}
-              </strong>
+            <strong className="stat-card-value">
+              {inactiveUsers}
+            </strong>
 
-              <span className="stat-card-description">
-                Disabled Users
-              </span>
-            </div>
+            <span className="stat-card-description">
+              Disabled Users
+            </span>
           </div>
+        </div>
       </div>
 
       {/* -------------------------------- */}
@@ -530,3 +601,4 @@ export default function UsersPage() {
     </DashboardLayout>
   );
 }
+

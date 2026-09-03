@@ -1,6 +1,8 @@
 import {
   Injectable,
   ConflictException,
+  BadRequestException,
+  UnauthorizedException,
   NotFoundException,
   ForbiddenException,
 } from "@nestjs/common";
@@ -114,21 +116,12 @@ if (role.isAdmin) {
   managerId = null;
 }
 
-// -----------------------------------
-// TOP-LEVEL NON-ADMIN ROLE
-// -----------------------------------
-
 else if (
   role.reportsToRoleId === null
 ) {
-  /*
-   * Example: CEO
-   *
-   * This role does not report to another
-   * role, therefore users with this role
-   * do not need a manager.
-   */
-  managerId = null;
+  throw new BadRequestException(
+    "A non-administrator role must have a reporting role",
+  );
 }
 
 // -----------------------------------
@@ -744,6 +737,62 @@ async findOne(
     });
   }
 
+// -----------------------------------
+// GET ROLES AVAILABLE FOR USER CREATION
+// FOR GRAPHQL USER CREATION FORM
+// -----------------------------------
+
+async findRolesForUserCreation(
+  currentUserId: number,
+) {
+  const currentUser =
+    await this.prisma.user.findUnique({
+      where: {
+        id: currentUserId,
+      },
+
+      include: {
+        role: true,
+      },
+    });
+
+  if (!currentUser) {
+    throw new NotFoundException(
+      "Current user not found",
+    );
+  }
+
+  // -----------------------------------
+  // ADMIN ONLY
+  // -----------------------------------
+
+  if (!currentUser.role.isAdmin) {
+    throw new ForbiddenException(
+      "Only administrators can create users",
+    );
+  }
+
+  // -----------------------------------
+  // ACTIVE NON-ADMIN ROLES
+  // -----------------------------------
+
+  return this.prisma.role.findMany({
+    where: {
+      active: true,
+      isAdmin: false,
+    },
+
+    include: {
+      reportsToRole: true,
+    },
+
+    orderBy: {
+      name: "asc",
+    },
+  });
+}
+
+
   // -----------------------------------
   // POSSIBLE MANAGERS FOR NEW USER
   // -----------------------------------
@@ -851,7 +900,7 @@ async findOne(
     return [];
   }
 
-  // -----------------------------------
+    // -----------------------------------
   // UPDATE USER
   // -----------------------------------
 
@@ -876,8 +925,8 @@ async findOne(
       });
 
     if (!currentUser) {
-      throw new NotFoundException(
-        "Current user not found",
+      throw new UnauthorizedException(
+        "User not found",
       );
     }
 
@@ -887,45 +936,47 @@ async findOne(
 
     if (id === currentUserId) {
       throw new ForbiddenException(
-        "You cannot manage your own account",
+        "You cannot edit your own account",
       );
     }
 
     // -----------------------------------
-    // GET TARGET USER
+    // GET EXISTING USER
     // -----------------------------------
 
-    const user =
+    const existingUser =
       await this.prisma.user.findUnique({
         where: {
           id,
         },
 
         include: {
-          role: {
+          role: true,
+
+          manager: {
             include: {
-              reportsToRole: true,
+              role: true,
             },
           },
         },
       });
 
-    if (!user) {
+    if (!existingUser) {
       throw new NotFoundException(
         "User not found",
       );
     }
 
     // -----------------------------------
-    // ADMIN CANNOT EDIT ANOTHER ADMIN
+    // ADMIN CANNOT EDIT ADMIN
     // -----------------------------------
 
     if (
       currentUser.role.isAdmin &&
-      user.role.isAdmin
+      existingUser.role.isAdmin
     ) {
       throw new ForbiddenException(
-        "Administrators cannot manage other administrators",
+        "Administrators cannot edit another administrator",
       );
     }
 
@@ -942,7 +993,7 @@ async findOne(
       !accessibleUserIds.includes(id)
     ) {
       throw new ForbiddenException(
-        "You are not allowed to manage this user",
+        "You do not have permission to edit this user",
       );
     }
 
@@ -950,15 +1001,9 @@ async findOne(
     // DETERMINE TARGET ROLE
     // -----------------------------------
 
-    let targetRoleId =
-      user.roleId;
-
-    if (
-      updateUserDto.roleId !== undefined
-    ) {
-      targetRoleId =
-        updateUserDto.roleId;
-    }
+    const targetRoleId =
+      updateUserDto.roleId ??
+      existingUser.roleId;
 
     const targetRole =
       await this.prisma.role.findUnique({
@@ -978,247 +1023,250 @@ async findOne(
     }
 
     // -----------------------------------
-    // ADMIN ROLE
+    // ROLE CHANGE
     // -----------------------------------
 
     /*
-     * Administrator users never have
-     * a manager.
+     * Only administrators can change
+     * another user's role.
      */
+    if (
+      updateUserDto.roleId !== undefined &&
+      updateUserDto.roleId !==
+        existingUser.roleId &&
+      !currentUser.role.isAdmin
+    ) {
+      throw new ForbiddenException(
+        "Only administrators can change user roles",
+      );
+    }
+
+    // -----------------------------------
+    // MANAGER
+    // -----------------------------------
+
+    let managerId:
+      | number
+      | null =
+      existingUser.managerId;
+
+    // -----------------------------------
+    // ADMINISTRATOR
+    // -----------------------------------
+
     if (targetRole.isAdmin) {
+      /*
+       * Administrators are the only
+       * top-level users.
+       *
+       * They never have a manager.
+       */
+      managerId = null;
+    }
+
+    // -----------------------------------
+    // NON-ADMIN ROLE
+    // -----------------------------------
+
+    else {
+      /*
+       * A non-admin user must have a role
+       * that defines who they report to.
+       *
+       * We never treat a non-admin role
+       * as a top-level user.
+       */
       if (
-        updateUserDto.managerId !==
-        undefined &&
-        updateUserDto.managerId !== null
+        targetRole.reportsToRoleId === null
       ) {
-        throw new ForbiddenException(
-          "Administrator users cannot have a manager",
+        throw new BadRequestException(
+          "A non-administrator role must have a reporting role",
         );
       }
 
-      // Force managerId to null when
-      // changing a user into an admin.
-      updateUserDto.managerId = null;
+      // -----------------------------------
+      // DETERMINE MANAGER
+      // -----------------------------------
+
+      if (
+        updateUserDto.managerId !== undefined
+      ) {
+        /*
+         * The form explicitly selected
+         * no manager.
+         */
+        managerId =
+          updateUserDto.managerId;
+      }
+
+      // -----------------------------------
+      // FIND ELIGIBLE MANAGERS
+      // -----------------------------------
+
+      const eligibleManagers =
+        await this.prisma.user.findMany({
+          where: {
+            id: {
+              not: id,
+            },
+
+            role: {
+              id: targetRole.reportsToRoleId,
+              active: true,
+            },
+          },
+
+          select: {
+            id: true,
+          },
+        });
+
+      // -----------------------------------
+      // MANAGER EXISTS
+      // -----------------------------------
+
+      if (
+        eligibleManagers.length > 0 &&
+        managerId === null
+      ) {
+        /*
+         * A valid manager exists, therefore
+         * this non-admin user must report
+         * to one of them.
+         */
+        throw new BadRequestException(
+          "A manager is required for the selected role",
+        );
+      }
+
+      // -----------------------------------
+      // NO MANAGER AVAILABLE
+      // -----------------------------------
+
+      /*
+       * If there are no eligible managers,
+       * managerId may remain null.
+       *
+       * This matches the Create User page.
+       */
+
+      // -----------------------------------
+      // VALIDATE SELECTED MANAGER
+      // -----------------------------------
+
+      if (managerId !== null) {
+        const manager =
+          await this.prisma.user.findUnique({
+            where: {
+              id: managerId,
+            },
+
+            include: {
+              role: true,
+            },
+          });
+
+        if (!manager) {
+          throw new NotFoundException(
+            "Selected manager not found",
+          );
+        }
+
+        // -----------------------------------
+        // CANNOT ASSIGN YOURSELF
+        // -----------------------------------
+
+        if (
+          manager.id === currentUserId
+        ) {
+          throw new BadRequestException(
+            "You cannot assign yourself as manager",
+          );
+        }
+
+        // -----------------------------------
+        // USER CANNOT MANAGE THEMSELVES
+        // -----------------------------------
+
+        if (
+          manager.id === id
+        ) {
+          throw new BadRequestException(
+            "A user cannot be their own manager",
+          );
+        }
+
+        // -----------------------------------
+        // MANAGER MUST BE ACTIVE
+        // -----------------------------------
+
+        if (!manager.role.active) {
+          throw new BadRequestException(
+            "Selected manager is inactive",
+          );
+        }
+
+        // -----------------------------------
+        // MANAGER ROLE
+        // -----------------------------------
+
+        if (
+          manager.role.id !==
+          targetRole.reportsToRoleId
+        ) {
+          throw new BadRequestException(
+            "Selected manager does not have the required reporting role",
+          );
+        }
+
+        // -----------------------------------
+        // NON-ADMIN ACCESS
+        // -----------------------------------
+
+        if (
+          !currentUser.role.isAdmin
+        ) {
+          const managerAccessible =
+            accessibleUserIds.includes(
+              manager.id,
+            );
+
+          if (!managerAccessible) {
+            throw new ForbiddenException(
+              "You do not have permission to assign this manager",
+            );
+          }
+        }
+
+        managerId = manager.id;
+      }
     }
 
     // -----------------------------------
-// MANAGER VALIDATION
-// -----------------------------------
-
-if (
-  !targetRole.isAdmin &&
-  updateUserDto.managerId !== undefined
-) {
-  // -----------------------------------
-  // ROLE MUST HAVE REPORTING ROLE
-  // -----------------------------------
-
-  if (
-    targetRole.reportsToRoleId === null
-  ) {
-    throw new ForbiddenException(
-      "Selected role must have a reporting role",
-    );
-  }
-
-  // -----------------------------------
-  // NO MANAGER
-  // -----------------------------------
-
-  /*
-   * A role can require a reporting role
-   * without a matching user currently
-   * existing in the database.
-   *
-   * Therefore managerId = null is allowed.
-   */
-  if (updateUserDto.managerId === null) {
-    // Nothing else to validate.
-  } else {
-    // -----------------------------------
-    // GET MANAGER
-    // -----------------------------------
-
-    const manager =
-      await this.prisma.user.findUnique({
-        where: {
-          id: updateUserDto.managerId,
-        },
-
-        include: {
-          role: true,
-        },
-      });
-
-    if (!manager) {
-      throw new NotFoundException(
-        "Manager not found",
-      );
-    }
-
-    // -----------------------------------
-    // CANNOT MANAGE SELF
-    // -----------------------------------
-
-    if (manager.id === id) {
-      throw new ForbiddenException(
-        "A user cannot be their own manager",
-      );
-    }
-
-    // -----------------------------------
-    // MANAGER ACCESS
-    // -----------------------------------
-
-    if (
-      !accessibleUserIds.includes(
-        manager.id,
-      )
-    ) {
-      throw new ForbiddenException(
-        "You are not allowed to assign this manager",
-      );
-    }
-
-    // -----------------------------------
-    // MANAGER ROLE
-    // -----------------------------------
-
-    if (
-      manager.role.id !==
-      targetRole.reportsToRoleId
-    ) {
-      throw new ForbiddenException(
-        "Selected manager does not have the required reporting role",
-      );
-    }
-
-    // -----------------------------------
-    // MANAGER ACTIVE
-    // -----------------------------------
-
-    if (!manager.role.active) {
-      throw new ForbiddenException(
-        "Cannot assign a user to someone with an inactive role",
-      );
-    }
-  }
-}
-
-    // -----------------------------------
-// ROLE CHANGE WITHOUT MANAGER CHANGE
-// -----------------------------------
-
-/*
- * If the role changes but managerId was
- * not supplied, keep the existing manager
- * only if that manager is still valid for
- * the new role.
- *
- * If there is no existing manager, that is
- * allowed. The user simply remains without
- * a manager until a valid manager exists.
- */
-
-if (
-  updateUserDto.roleId !== undefined &&
-  !targetRole.isAdmin &&
-  updateUserDto.managerId === undefined
-) {
-  // -----------------------------------
-  // ROLE MUST HAVE REPORTING ROLE
-  // -----------------------------------
-
-  if (
-    targetRole.reportsToRoleId === null
-  ) {
-    throw new ForbiddenException(
-      "Selected role must have a reporting role",
-    );
-  }
-
-  // -----------------------------------
-  // NO EXISTING MANAGER
-  // -----------------------------------
-
-  if (user.managerId === null) {
-    /*
-     * No manager currently exists.
-     *
-     * This is allowed. The user's manager
-     * remains null until a valid manager
-     * is assigned later.
-     */
-  } else {
-    // -----------------------------------
-    // VALIDATE EXISTING MANAGER
-    // -----------------------------------
-
-    const existingManager =
-      await this.prisma.user.findUnique({
-        where: {
-          id: user.managerId,
-        },
-
-        include: {
-          role: true,
-        },
-      });
-
-    if (!existingManager) {
-      throw new NotFoundException(
-        "Existing manager not found",
-      );
-    }
-
-    // -----------------------------------
-    // MANAGER ROLE
-    // -----------------------------------
-
-    if (
-      existingManager.role.id !==
-      targetRole.reportsToRoleId
-    ) {
-      throw new ForbiddenException(
-        "The user's current manager does not have the required reporting role for the selected role",
-      );
-    }
-
-    // -----------------------------------
-    // MANAGER ACTIVE
-    // -----------------------------------
-
-    if (
-      !existingManager.role.active
-    ) {
-      throw new ForbiddenException(
-        "Cannot assign a user to someone with an inactive role",
-      );
-    }
-  }
-}
-
-    // -----------------------------------
-    // PREPARE UPDATE
+    // PASSWORD
     // -----------------------------------
 
     const data: any = {
-      ...updateUserDto,
+      name: updateUserDto.name,
+      email: updateUserDto.email,
+      roleId: targetRoleId,
+      managerId,
     };
 
-    /*
-     * Hash password only when a new
-     * password was provided.
-     */
-    if (updateUserDto.password) {
+    if (
+      updateUserDto.password &&
+      updateUserDto.password.trim()
+    ) {
       data.password =
         await bcrypt.hash(
           updateUserDto.password,
           10,
         );
-    } else {
-      delete data.password;
     }
+
+    // -----------------------------------
+    // UPDATE USER
+    // -----------------------------------
 
     return this.prisma.user.update({
       where: {
@@ -1228,12 +1276,15 @@ if (
       data,
 
       include: {
-        role: true,
+        role: {
+          include: {
+            reportsToRole: true,
+          },
+        },
 
         manager: {
-          select: {
-            id: true,
-            name: true,
+          include: {
+            role: true,
           },
         },
       },
