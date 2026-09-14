@@ -2,114 +2,254 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api";
-import { useRouter } from "next/navigation";
 import { getUser } from "@/lib/auth";
+import { useRouter } from "next/navigation";
 import axios from "axios";
+
 export default function LoginForm() {
   const router = useRouter();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState("");
 
   async function login(e: React.FormEvent) {
     e.preventDefault();
+
+    setError("");
+
+    if (!email.trim() || !password) {
+      setError(
+        "Please enter your email address and password.",
+      );
+      return;
+    }
 
     setLoading(true);
 
     try {
       const { data } = await api.post("/auth/login", {
-        email,
+        email: email.trim(),
         password,
       });
 
-      localStorage.setItem("token", data.accessToken);
+      localStorage.setItem(
+        "token",
+        data.accessToken,
+      );
 
       const user = getUser();
 
-const permissions =
-  user?.permissions || [];
+      const permissions =
+        user?.permissions || [];
 
-if (permissions.includes("dashboard.view")) {
-  router.push("/dashboard");
-} else if (
-  permissions.includes("users.read")
-) {
-  router.push("/users");
-} else if (
-  permissions.includes("roles.manage")
-) {
-  router.push("/roles");
-} else {
-  router.push("/access-denied");
-}
+      if (permissions.includes("dashboard.view")) {
+        router.push("/dashboard");
+      } else if (
+        permissions.includes("users.read")
+      ) {
+        router.push("/users");
+      } else if (
+        permissions.includes("roles.manage")
+      ) {
+        router.push("/roles");
+      } else {
+        router.push("/access-denied");
+      }
     } catch (error) {
-  if (axios.isAxiosError(error)) {
-    const message =
-      error.response?.data?.message ||
-      "Unable to sign in.";
+      if (axios.isAxiosError(error)) {
+        const message =
+          error.response?.data?.message ||
+          "Unable to sign in. Please check your credentials and try again.";
 
-    alert(message);
-  } else {
-    alert("Unable to sign in.");
-  }
-} finally {
+        setError(
+          Array.isArray(message)
+            ? message.join(", ")
+            : message,
+        );
+      } else {
+        setError(
+          "Unable to sign in. Please try again.",
+        );
+      }
+    } finally {
       setLoading(false);
     }
   }
 
   return (
-    <form onSubmit={login} className="login-form">
-      <div className="login-brand">
-        <div className="login-brand-mark">Sapphire</div>
+    <div className="auth-form-wrapper">
+      <div className="auth-form-brand">
+        <div className="auth-form-brand-mark">
+          S
+        </div>
       </div>
 
-      <div className="login-heading">
-        <h1>Welcome back</h1>
-        <p>Sign in to your account</p>
-      </div>
-
-      <div className="form-group">
-        <label htmlFor="email">Email address</label>
-
-        <input
-          id="email"
-          type="email"
-          placeholder="you@company.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-        />
-      </div>
-
-      <div className="form-group">
-        <div className="password-label">
-          <label htmlFor="password">Password</label>
+      <div className="auth-form-heading">
+        <div className="auth-form-eyebrow">
+          SECURE PORTAL
         </div>
 
-        <input
-          id="password"
-          type="password"
-          placeholder="Enter your password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
+        <h2>Welcome back</h2>
+
+        <p>
+          Sign in to continue to your management
+          portal.
+        </p>
       </div>
 
-      <button
-        type="submit"
-        className="login-button"
-        disabled={loading}
+      {error && (
+        <div
+          className="auth-error"
+          role="alert"
+        >
+          <div className="auth-error-icon">
+            !
+          </div>
+
+          <div className="auth-error-content">
+            <strong>
+              Sign in unsuccessful
+            </strong>
+
+            <span>{error}</span>
+          </div>
+
+          <button
+            type="button"
+            className="auth-error-close"
+            onClick={() => setError("")}
+            aria-label="Dismiss error"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      <form
+        onSubmit={login}
+        className="auth-form"
       >
-        {loading ? "Signing in..." : "Sign in"}
-      </button>
+        <div className="auth-field">
+          <label htmlFor="email">
+            Email address
+          </label>
 
-      <div className="login-footer">
-        <span>Secure access</span>
-        <span>•</span>
-        <span>RBAC protected</span>
+          <div className="auth-input-wrapper">
+            <span className="auth-input-icon">
+              @
+            </span>
+
+            <input
+              id="email"
+              type="email"
+              placeholder="you@company.com"
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                if (error) setError("");
+              }}
+              disabled={loading}
+              autoComplete="email"
+              required
+            />
+          </div>
+        </div>
+
+        <div className="auth-field">
+          <label htmlFor="password">
+            Password
+          </label>
+
+          <div className="auth-input-wrapper">
+            <span className="auth-input-icon">
+              •
+            </span>
+
+            <input
+              id="password"
+              type={
+                showPassword
+                  ? "text"
+                  : "password"
+              }
+              placeholder="Enter your password"
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                if (error) setError("");
+              }}
+              disabled={loading}
+              autoComplete="current-password"
+              required
+            />
+
+            <button
+              type="button"
+              className="auth-password-toggle"
+              onClick={() =>
+                setShowPassword(
+                  (current) => !current,
+                )
+              }
+              disabled={loading}
+              aria-label={
+                showPassword
+                  ? "Hide password"
+                  : "Show password"
+              }
+            >
+              {showPassword
+                ? "Hide"
+                : "Show"}
+            </button>
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          className="auth-submit-button"
+          disabled={loading}
+        >
+          {loading ? (
+            <>
+              <span className="auth-button-spinner" />
+              Signing in...
+            </>
+          ) : (
+            <>
+              Sign in
+              <span className="auth-submit-arrow">
+                →
+              </span>
+            </>
+          )}
+        </button>
+      </form>
+
+      <div className="auth-register-link">
+        <span>
+          Don't have an account?
+        </span>
+
+        <button
+          type="button"
+          onClick={() =>
+            router.push("/register")
+          }
+          disabled={loading}
+        >
+          Create one
+        </button>
       </div>
-    </form>
+
+      <div className="auth-security-note">
+        <span>RBAC protected</span>
+        <span>•</span>
+        <span>Secure access</span>
+      </div>
+    </div>
   );
 }

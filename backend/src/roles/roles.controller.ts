@@ -9,6 +9,7 @@ import {
   Post,
   Req,
   UseGuards,
+  Query,
 } from "@nestjs/common";
 
 import { RolesService } from "./roles.service";
@@ -29,14 +30,23 @@ export class RolesController {
   // GET ROLES
   // -----------------------------------
 
-  @Get()
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions("roles.manage")
-  findAll(@Req() req: any) {
-    return this.rolesService.findAll(
-      Number(req.user.id),
-    );
-  }
+ @Get()
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+@Permissions(
+  "roles.manage",
+  "users.update",
+)
+findAll(
+  @Req() req: any,
+  @Query("page") page?: string,
+  @Query("limit") limit?: string,
+) {
+  return this.rolesService.findAll(
+    Number(req.user.id),
+    page ? Number(page) : 1,
+    limit ? Number(limit) : 10,
+  );
+}
 
   // -----------------------------------
   // GET ACTIVE GROUPS
@@ -117,6 +127,7 @@ export class RolesController {
     return this.rolesService.create(
       dto,
       Number(req.user.id),
+      req,
     );
   }
 
@@ -136,6 +147,7 @@ export class RolesController {
       id,
       dto,
       Number(req.user.id),
+      req,
     );
   }
 
@@ -153,6 +165,7 @@ export class RolesController {
     return this.rolesService.toggleStatus(
       id,
       Number(req.user.id),
+      req,
     );
   }
 
@@ -170,6 +183,7 @@ export class RolesController {
     return this.rolesService.remove(
       id,
       Number(req.user.id),
+      req,
     );
   }
 
@@ -189,6 +203,7 @@ export class RolesController {
       id,
       dto.permissionIds,
       Number(req.user.id),
+      req,
     );
   }
 }

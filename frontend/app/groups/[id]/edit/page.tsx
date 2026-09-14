@@ -53,10 +53,6 @@ export default function EditGroupPage() {
   const [error, setError] =
     useState("");
 
-  // -----------------------------------
-  // LOAD GROUP + PERMISSIONS
-  // -----------------------------------
-
   useEffect(() => {
     if (!groupId || Number.isNaN(groupId)) {
       setError("Invalid group ID.");
@@ -84,15 +80,12 @@ export default function EditGroupPage() {
         groupResponse.data;
 
       setGroup(loadedGroup);
-
       setName(loadedGroup.name);
-
       setActive(loadedGroup.active);
 
       setSelectedPermissions(
         loadedGroup.permissions.map(
-          (item) =>
-            item.permission.id,
+          (item) => item.permission.id,
         ),
       );
 
@@ -117,30 +110,16 @@ export default function EditGroupPage() {
     }
   }
 
-  // -----------------------------------
-  // TOGGLE PERMISSION
-  // -----------------------------------
-
-  function togglePermission(
-    id: number,
-  ) {
-    setSelectedPermissions(
-      (current) =>
-        current.includes(id)
-          ? current.filter(
-              (permissionId) =>
-                permissionId !== id,
-            )
-          : [
-              ...current,
-              id,
-            ],
+  function togglePermission(id: number) {
+    setSelectedPermissions((current) =>
+      current.includes(id)
+        ? current.filter(
+            (permissionId) =>
+              permissionId !== id,
+          )
+        : [...current, id],
     );
   }
-
-  // -----------------------------------
-  // SAVE
-  // -----------------------------------
 
   async function saveGroup(
     e: React.FormEvent,
@@ -156,9 +135,7 @@ export default function EditGroupPage() {
       return;
     }
 
-    if (
-      selectedPermissions.length === 0
-    ) {
+    if (selectedPermissions.length === 0) {
       setError(
         "Select at least one parent permission.",
       );
@@ -178,7 +155,9 @@ export default function EditGroupPage() {
         },
       );
 
-      router.push("/groups?success=updated");
+      router.replace(
+        "/groups?success=updated",
+      );
     } catch (err: any) {
       console.error(
         "Unable to update group:",
@@ -194,51 +173,53 @@ export default function EditGroupPage() {
     }
   }
 
-  // -----------------------------------
-  // LOADING
-  // -----------------------------------
-
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="page-loading">
-          Loading group...
+        <div className="company-page-loading">
+          <div className="company-loading-spinner" />
+          <span>Loading group...</span>
         </div>
       </DashboardLayout>
     );
   }
-
-  // -----------------------------------
-  // ERROR / NOT FOUND
-  // -----------------------------------
 
   if (!group) {
     return (
       <DashboardLayout>
-        <div className="groups-page">
+        <div className="company-groups-edit-page">
 
-          <div className="page-header">
+          <div className="company-page-header">
             <div>
-              <div className="page-eyebrow">
+              <div className="company-page-eyebrow">
                 ACCESS CONTROL
               </div>
 
               <h1>Edit group</h1>
+
+              <p>
+                Update group configuration and
+                permissions.
+              </p>
             </div>
 
-            <button
-              className="button button-secondary"
-              onClick={() =>
-                router.push("/groups")
-              }
-            >
-              ← Back to groups
-            </button>
+            <div className="company-page-actions">
+              <button
+                type="button"
+                className="company-secondary-button"
+                onClick={() =>
+                  router.push("/groups")
+                }
+              >
+                ← Back to groups
+              </button>
+            </div>
           </div>
 
-          <div className="groups-alert groups-alert-error">
-            {error ||
-              "Group not found."}
+          <div className="company-users-error">
+            {Array.isArray(error)
+              ? error.join(", ")
+              : error || "Group not found."}
           </div>
 
         </div>
@@ -246,134 +227,138 @@ export default function EditGroupPage() {
     );
   }
 
-  // -----------------------------------
-  // PAGE
-  // -----------------------------------
-
   return (
     <DashboardLayout>
-
-      <div className="groups-page">
+      <div className="company-groups-edit-page">
 
         {/* HEADER */}
 
-        <div className="page-header">
-
+        <div className="company-page-header">
           <div>
-
-            <div className="page-eyebrow">
+            <div className="company-page-eyebrow">
               ACCESS CONTROL
             </div>
 
-            <h1>
-              Edit group
-            </h1>
+            <h1>Edit group</h1>
 
             <p>
-              Update {group.name}'s
-              permissions and status.
+              Update {group.name}'s permissions
+              and status.
             </p>
-
           </div>
 
-          <button
-            className="button button-secondary"
-            onClick={() =>
-              router.push("/groups")
-            }
-            disabled={saving}
-          >
-            ← Back to groups
-          </button>
-
+          <div className="company-page-actions">
+            <button
+              type="button"
+              className="company-secondary-button"
+              onClick={() =>
+                router.push("/groups")
+              }
+              disabled={saving}
+            >
+              ← Back to groups
+            </button>
+          </div>
         </div>
 
         {/* ERROR */}
 
         {error && (
-          <div className="groups-alert groups-alert-error">
+          <div className="company-users-error">
             {Array.isArray(error)
               ? error.join(", ")
               : error}
           </div>
         )}
 
-        {/* FORM */}
+        {/* FORM PANEL */}
 
-        <section className="groups-form-card">
+        <section className="company-groups-edit-panel">
 
-          <div className="groups-section-heading">
+          {/* PANEL HEADER */}
 
-            <div className="groups-section-icon">
+          <div className="company-groups-edit-panel-header">
+
+            <div className="company-groups-edit-heading-icon">
               ✎
             </div>
 
             <div>
+              <div className="company-panel-eyebrow">
+                GROUP CONFIGURATION
+              </div>
 
               <h2>
                 Group information
               </h2>
 
               <p>
-                Update the group's
-                configuration.
+                Update the group's name,
+                permissions, and availability.
               </p>
-
             </div>
 
           </div>
 
           <form
             onSubmit={saveGroup}
-            className="groups-form"
+            className="company-groups-edit-form"
           >
 
-            {/* NAME */}
+            {/* GROUP NAME */}
 
-            <div className="groups-field">
+            <div className="company-groups-edit-field">
 
-              <label>
+              <label htmlFor="group-name">
                 Group name
               </label>
 
               <input
+                id="group-name"
                 type="text"
                 value={name}
                 onChange={(e) =>
-                  setName(
-                    e.target.value,
-                  )
+                  setName(e.target.value)
                 }
                 placeholder="e.g. Management"
                 disabled={saving}
                 required
               />
 
+              <small>
+                Choose a clear name that describes
+                the group.
+              </small>
+
             </div>
 
             {/* PERMISSIONS */}
 
-            <div className="groups-field">
+            <div className="company-groups-edit-field">
 
-              <div className="groups-field-label">
+              <div className="company-groups-edit-field-header">
 
-                <label>
-                  Parent permissions
-                </label>
+                <div>
+                  <label>
+                    Parent permissions
+                  </label>
 
-                <span>
-                  Select the application
-                  areas this group can
-                  contain.
+                  <small>
+                    Select the application areas
+                    this group can contain.
+                  </small>
+                </div>
+
+                <span className="company-groups-selected-count">
+                  {selectedPermissions.length} selected
                 </span>
 
               </div>
 
-              <div className="permission-grid">
+              <div className="company-groups-permission-grid">
 
                 {permissions.map(
                   (permission) => {
-
                     const selected =
                       selectedPermissions.includes(
                         permission.id,
@@ -390,14 +375,12 @@ export default function EditGroupPage() {
 
                     return (
                       <button
-                        key={
-                          permission.id
-                        }
+                        key={permission.id}
                         type="button"
                         disabled={saving}
-                        className={`permission-option ${
+                        className={`company-groups-permission-option ${
                           selected
-                            ? "permission-option-selected"
+                            ? "company-groups-permission-option-selected"
                             : ""
                         }`}
                         onClick={() =>
@@ -406,15 +389,11 @@ export default function EditGroupPage() {
                           )
                         }
                       >
-
-                        <span className="permission-check">
-                          {selected
-                            ? "✓"
-                            : ""}
+                        <span className="company-groups-permission-check">
+                          {selected ? "✓" : ""}
                         </span>
 
-                        <span className="permission-option-content">
-
+                        <span className="company-groups-permission-content">
                           <strong>
                             {label}
                           </strong>
@@ -422,9 +401,7 @@ export default function EditGroupPage() {
                           <small>
                             Application area
                           </small>
-
                         </span>
-
                       </button>
                     );
                   },
@@ -432,63 +409,64 @@ export default function EditGroupPage() {
 
               </div>
 
-              <div className="groups-help">
-                Groups contain parent
-                permissions only. Child
-                permissions are selected
-                later when creating a role.
+              <div className="company-groups-edit-help">
+                <span>ⓘ</span>
+
+                <span>
+                  Groups contain parent permissions
+                  only. Child permissions are selected
+                  later when configuring a role.
+                </span>
               </div>
 
             </div>
 
             {/* STATUS */}
 
-            <div className="groups-status-row">
+            <div className="company-groups-status-card">
 
-              <div>
+              <div className="company-groups-status-copy">
 
-                <strong>
+                <div className="company-groups-status-title">
                   Group status
-                </strong>
+                </div>
 
-                <span>
+                <div className="company-groups-status-description">
                   {active
                     ? "This group can be assigned to roles."
                     : "This group is currently unavailable."}
-                </span>
+                </div>
 
               </div>
 
               <button
                 type="button"
                 disabled={saving}
-                className={`status-toggle ${
+                className={`company-groups-status-toggle ${
                   active
-                    ? "status-toggle-active"
+                    ? "company-groups-status-toggle-active"
                     : ""
                 }`}
                 onClick={() =>
                   setActive(!active)
                 }
               >
-
-                <span className="status-toggle-dot" />
+                <span className="company-groups-status-toggle-dot" />
 
                 {active
                   ? "Active"
                   : "Inactive"}
-
               </button>
 
             </div>
 
             {/* ACTIONS */}
 
-            <div className="groups-form-actions">
+            <div className="company-groups-edit-actions">
 
               <button
                 type="button"
-                className="button button-secondary"
+                className="company-secondary-button"
                 onClick={() =>
                   router.push("/groups")
                 }
@@ -499,7 +477,7 @@ export default function EditGroupPage() {
 
               <button
                 type="submit"
-                className="button button-primary"
+                className="company-primary-button"
                 disabled={saving}
               >
                 {saving
@@ -514,7 +492,6 @@ export default function EditGroupPage() {
         </section>
 
       </div>
-
     </DashboardLayout>
   );
 }

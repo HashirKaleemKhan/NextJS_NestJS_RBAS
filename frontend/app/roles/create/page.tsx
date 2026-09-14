@@ -3,9 +3,8 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-import { getUser, logout } from "@/lib/auth";
+import { getUser } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
-
 import RoleForm from "../components/RoleForm";
 
 import "../roles.css";
@@ -14,8 +13,7 @@ export default function CreateRolePage() {
   const router = useRouter();
 
   useEffect(() => {
-    const token =
-      localStorage.getItem("token");
+    const token = localStorage.getItem("token");
 
     if (!token) {
       router.replace("/login");
@@ -32,17 +30,13 @@ export default function CreateRolePage() {
 
     if (
       !isAdmin &&
-      !permissions.includes(
-        "roles.manage",
-      )
+      !permissions.includes("roles.manage")
     ) {
       router.replace("/dashboard");
     }
   }, [router]);
 
-  function handleSuccess(
-    message: string,
-  ) {
+  function handleSuccess(message: string) {
     sessionStorage.setItem(
       "rolesSuccessMessage",
       message,
@@ -53,44 +47,60 @@ export default function CreateRolePage() {
 
   return (
     <DashboardLayout>
-      <div className="page-header">
-        <div>
-          <div className="page-eyebrow">
-            ACCESS CONTROL
-          </div>
-
-          <h1>Create role</h1>
-
-          <p>
-            Create a new role and configure
-            its access permissions.
-          </p>
-        </div>
-
-        <button
-          className="button button-secondary"
-          onClick={logout}
-        >
-          Logout
-        </button>
-      </div>
-
-      <div className="content-card role-form-card">
-        <div className="card-header">
+      <div className="company-role-edit-page">
+        <div className="company-page-header">
           <div>
-            <h2>Role details</h2>
+            <div className="company-page-eyebrow">
+              ACCESS MANAGEMENT
+            </div>
+
+            <h1>Create role</h1>
 
             <p>
-              Configure the role, reporting
-              structure, status, and permissions.
+              Create a new role and configure its
+              reporting relationship, status, and
+              access permissions.
             </p>
+          </div>
+
+          <div className="company-page-actions">
+            <button
+              type="button"
+              className="company-secondary-button"
+              onClick={() => router.push("/roles")}
+            >
+              ← Back to roles
+            </button>
           </div>
         </div>
 
-        <RoleForm
-          mode="create"
-          onSuccess={handleSuccess}
-        />
+        <div className="company-role-edit-panel">
+          <div className="company-role-edit-header">
+            <div>
+              <div className="company-panel-eyebrow">
+                ROLE CONFIGURATION
+              </div>
+
+              <h2>Role details</h2>
+
+              <p>
+                Configure the role, reporting
+                structure, status, and permissions.
+              </p>
+            </div>
+
+            <div className="company-role-edit-badge">
+              New role
+            </div>
+          </div>
+
+          <div className="company-role-edit-body">
+            <RoleForm
+              mode="create"
+              onSuccess={handleSuccess}
+            />
+          </div>
+        </div>
       </div>
     </DashboardLayout>
   );

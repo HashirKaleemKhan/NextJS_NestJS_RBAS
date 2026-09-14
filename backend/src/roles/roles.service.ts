@@ -3,14 +3,19 @@ import {
   NotFoundException,
   ForbiddenException,
 } from "@nestjs/common";
+
 import { CreateRoleDto } from "./dto/create-role.dto";
-import { PrismaService } from "../prisma/prisma.service";
 import { UpdateRoleDto } from "./dto/update-role.dto";
+import { PrismaService } from "../prisma/prisma.service";
+
+import { AuditLogsService } from "../audit-logs/audit-logs.service";
+import { AuditAction } from "../audit-logs/audit-actions";
 
 @Injectable()
 export class RolesService {
   constructor(
     private prisma: PrismaService,
+    private auditLogsService: AuditLogsService,
   ) {}
 
   // -----------------------------------
@@ -51,88 +56,164 @@ export class RolesService {
   // -----------------------------------
 
   async findAll(
-    currentUserId: number,
-  ) {
-    await this.verifyAdmin(
-      currentUserId,
-    );
-
-    return this.prisma.role.findMany({
-      include: {
-        group: true,
-
-        reportsToRole: true,
-
-        subordinateRoles: true,
-
-        users: true,
-
-        permissions: {
-          include: {
-            permission: true,
-          },
-        },
-      },
-
-      orderBy: {
-        name: "asc",
-      },
-    });
-  }
-
-  // -----------------------------------
-// GET ONE ROLE
-// -----------------------------------
-
-async findOne(
-  roleId: number,
   currentUserId: number,
+  page = 1,
+  limit = 10,
 ) {
-  await this.verifyAdmin(currentUserId);
-
-  const role =
-    await this.prisma.role.findUnique({
+  const currentUser =
+    await this.prisma.user.findUnique({
       where: {
-        id: roleId,
+        id: currentUserId,
       },
 
       include: {
-        group: true,
-
-        reportsToRole: true,
-
-        subordinateRoles: true,
-
-        users: {
+        role: {
           include: {
-            manager: {
-              select: {
-                id: true,
-                name: true,
-                roleId: true,
+            permissions: {
+              include: {
+                permission: true,
               },
             },
-
-            role: true,
-          },
-        },
-
-        permissions: {
-          include: {
-            permission: true,
           },
         },
       },
     });
 
-  if (!role) {
+  if (!currentUser) {
     throw new NotFoundException(
-      "Role not found",
+      "Current user not found",
     );
   }
 
-  return role;
+  const canReadRoles =
+    currentUser.role.isAdmin ||
+    currentUser.role.permissions.some(
+      (rolePermission) =>
+        rolePermission.permission.name ===
+        "users.update",
+    ) ||
+    currentUser.role.permissions.some(
+      (rolePermission) =>
+        rolePermission.permission.name ===
+        "roles.manage",
+    );
+
+  if (!canReadRoles) {
+    throw new ForbiddenException(
+      "You are not allowed to view roles",
+    );
+  }
+
+  const safePage = Math.max(
+    1,
+    Number(page) || 1,
+  );
+
+  const safeLimit = Math.min(
+    100,
+    Math.max(1, Number(limit) || 10),
+  );
+
+  const skip =
+    (safePage - 1) * safeLimit;
+
+  const [roles, total] =
+    await Promise.all([
+      this.prisma.role.findMany({
+        skip,
+        take: safeLimit,
+
+        include: {
+          group: true,
+
+          reportsToRole: true,
+
+          subordinateRoles: true,
+
+          users: true,
+
+          permissions: {
+            include: {
+              permission: true,
+            },
+          },
+        },
+
+        orderBy: {
+          name: "asc",
+        },
+      }),
+
+      this.prisma.role.count(),
+    ]);
+
+  return {
+    data: roles,
+
+    pagination: {
+      page: safePage,
+      limit: safeLimit,
+      total,
+      totalPages: Math.ceil(
+        total / safeLimit,
+      ),
+    },
+  };
 }
+
+  // -----------------------------------
+  // GET ONE ROLE
+  // -----------------------------------
+
+  async findOne(
+    roleId: number,
+    currentUserId: number,
+  ) {
+    await this.verifyAdmin(currentUserId);
+
+    const role =
+      await this.prisma.role.findUnique({
+        where: {
+          id: roleId,
+        },
+
+        include: {
+          group: true,
+
+          reportsToRole: true,
+
+          subordinateRoles: true,
+
+          users: {
+            include: {
+              manager: {
+                select: {
+                  id: true,
+                  name: true,
+                  roleId: true,
+                },
+              },
+
+              role: true,
+            },
+          },
+
+          permissions: {
+            include: {
+              permission: true,
+            },
+          },
+        },
+      });
+
+    if (!role) {
+      throw new NotFoundException(
+        "Role not found",
+      );
+    }
+
+    return role;
+  }
 
   // -----------------------------------
   // CREATE ROLE
@@ -141,6 +222,7 @@ async findOne(
   async create(
     dto: CreateRoleDto,
     currentUserId: number,
+    req: any,
   ) {
     await this.verifyAdmin(
       currentUserId,
@@ -258,12 +340,6 @@ async findOne(
         );
       }
 
-      /*
-       * Get every child permission that is
-       * allowed by this group's parent
-       * permissions.
-       */
-
       const allowedPermissionIds =
         group.permissions.flatMap(
           (groupPermission) =>
@@ -298,7 +374,7 @@ async findOne(
         data: {
           name: dto.name,
 
-          groupId:  
+          groupId:
             dto.groupId ?? null,
 
           reportsToRoleId,
@@ -330,457 +406,624 @@ async findOne(
     }
 
     // -----------------------------------
-    // RETURN CREATED ROLE
+    // GET CREATED ROLE
     // -----------------------------------
 
-    return this.prisma.role.findUnique({
-      where: {
-        id: role.id,
-      },
-
-      include: {
-        group: true,
-
-        reportsToRole: true,
-
-        subordinateRoles: true,
-
-        users: true,
-
-        permissions: {
-          include: {
-            permission: true,
-          },
-        },
-      },
-    });
-  }
-
-  // -----------------------------------
-// UPDATE ROLE
-// -----------------------------------
-
-async update(
-  roleId: number,
-  dto: UpdateRoleDto,
-  currentUserId: number,
-) {
-  await this.verifyAdmin(
-    currentUserId,
-  );
-
-  // -----------------------------------
-  // FIND ROLE
-  // -----------------------------------
-
-  const role =
-    await this.prisma.role.findUnique({
-      where: {
-        id: roleId,
-      },
-
-      include: {
-        users: true,
-      },
-    });
-
-  if (!role) {
-    throw new NotFoundException(
-      "Role not found",
-    );
-  }
-
-  // -----------------------------------
-  // PROTECT OWN ADMIN ACCESS
-  // -----------------------------------
-
-  if (
-    role.isAdmin &&
-    role.users.some(
-      (user) =>
-        user.id === currentUserId,
-    ) &&
-    dto.isAdmin === false
-  ) {
-    throw new ForbiddenException(
-      "You cannot remove administrator access from your own account",
-    );
-  }
-
-  // -----------------------------------
-  // CHECK ROLE NAME
-  // -----------------------------------
-
-  if (dto.name !== undefined) {
-    const existingRole =
-      await this.prisma.role.findFirst({
+    const createdRole =
+      await this.prisma.role.findUnique({
         where: {
-          name: dto.name,
+          id: role.id,
+        },
 
-          NOT: {
-            id: roleId,
+        include: {
+          group: true,
+
+          reportsToRole: true,
+
+          subordinateRoles: true,
+
+          users: true,
+
+          permissions: {
+            include: {
+              permission: true,
+            },
           },
         },
       });
 
-    if (existingRole) {
-      throw new ForbiddenException(
-        "Role already exists",
+    if (!createdRole) {
+      throw new NotFoundException(
+        "Created role not found",
       );
     }
+
+    // -----------------------------------
+    // AUDIT ROLE CREATED
+    // -----------------------------------
+
+    await this.auditLogsService.log({
+      actorId: currentUserId,
+      action: AuditAction.ROLE_CREATED,
+      entity: "Role",
+      entityId: createdRole.id,
+      description:
+        `Role ${createdRole.name} was created`,
+
+      newValues: {
+        name: createdRole.name,
+        group:
+          createdRole.group?.name ??
+          null,
+        reportsToRole:
+          createdRole.reportsToRole?.name ??
+          null,
+        active: createdRole.active,
+        isAdmin: createdRole.isAdmin,
+        permissions:
+          createdRole.permissions.map(
+            (rolePermission) =>
+              rolePermission.permission.name,
+          ),
+      },
+
+      ipAddress:
+        req.ip ||
+        req.headers["x-forwarded-for"] ||
+        null,
+
+      userAgent:
+        req.headers["user-agent"] ||
+        null,
+    });
+
+    return createdRole;
   }
 
   // -----------------------------------
-  // CHECK GROUP
+  // UPDATE ROLE
   // -----------------------------------
 
-  const targetGroupId =
-    dto.groupId !== undefined
-      ? dto.groupId
-      : role.groupId;
+  async update(
+    roleId: number,
+    dto: UpdateRoleDto,
+    currentUserId: number,
+    req: any,
+  ) {
+    await this.verifyAdmin(
+      currentUserId,
+    );
 
-  const group =
-    targetGroupId !== null &&
-    targetGroupId !== undefined
-      ? await this.prisma.group.findUnique({
-          where: {
-            id: targetGroupId,
+    // -----------------------------------
+    // FIND ROLE
+    // -----------------------------------
+
+    const role =
+      await this.prisma.role.findUnique({
+        where: {
+          id: roleId,
+        },
+
+        include: {
+          users: true,
+
+          group: true,
+
+          reportsToRole: true,
+
+          permissions: {
+            include: {
+              permission: true,
+            },
           },
+        },
+      });
 
-          include: {
-            permissions: {
-              include: {
-                permission: {
-                  include: {
-                    children: true,
+    if (!role) {
+      throw new NotFoundException(
+        "Role not found",
+      );
+    }
+
+    // -----------------------------------
+    // PROTECT OWN ADMIN ACCESS
+    // -----------------------------------
+
+    if (
+      role.isAdmin &&
+      role.users.some(
+        (user) =>
+          user.id === currentUserId,
+      ) &&
+      dto.isAdmin === false
+    ) {
+      throw new ForbiddenException(
+        "You cannot remove administrator access from your own account",
+      );
+    }
+
+    // -----------------------------------
+    // CHECK ROLE NAME
+    // -----------------------------------
+
+    if (dto.name !== undefined) {
+      const existingRole =
+        await this.prisma.role.findFirst({
+          where: {
+            name: dto.name,
+
+            NOT: {
+              id: roleId,
+            },
+          },
+        });
+
+      if (existingRole) {
+        throw new ForbiddenException(
+          "Role already exists",
+        );
+      }
+    }
+
+    // -----------------------------------
+    // CHECK GROUP
+    // -----------------------------------
+
+    const targetGroupId =
+      dto.groupId !== undefined
+        ? dto.groupId
+        : role.groupId;
+
+    const group =
+      targetGroupId !== null &&
+      targetGroupId !== undefined
+        ? await this.prisma.group.findUnique({
+            where: {
+              id: targetGroupId,
+            },
+
+            include: {
+              permissions: {
+                include: {
+                  permission: {
+                    include: {
+                      children: true,
+                    },
                   },
                 },
               },
             },
-          },
-        })
-      : null;
-
-  if (
-    targetGroupId !== null &&
-    targetGroupId !== undefined &&
-    !group
-  ) {
-    throw new NotFoundException(
-      "Group not found",
-    );
-  }
-
-  if (group && !group.active) {
-    throw new ForbiddenException(
-      "Cannot assign an inactive group",
-    );
-  }
-
-  // -----------------------------------
-  // VALIDATE CHILD PERMISSIONS
-  // -----------------------------------
-
-  if (
-    dto.permissionIds !== undefined &&
-    dto.permissionIds.length > 0
-  ) {
-    if (!group) {
-      throw new ForbiddenException(
-        "A group is required when assigning permissions",
-      );
-    }
-
-    const allowedPermissionIds =
-      group.permissions.flatMap(
-        (groupPermission) =>
-          groupPermission.permission.children.map(
-            (child) => child.id,
-          ),
-      );
-
-    const invalidPermissionIds =
-      dto.permissionIds.filter(
-        (permissionId) =>
-          !allowedPermissionIds.includes(
-            permissionId,
-          ),
-      );
+          })
+        : null;
 
     if (
-      invalidPermissionIds.length > 0
+      targetGroupId !== null &&
+      targetGroupId !== undefined &&
+      !group
     ) {
-      throw new ForbiddenException(
-        "One or more permissions are not available for this group",
-      );
-    }
-  }
-
-  // -----------------------------------
-  // DETERMINE ADMIN STATUS
-  // -----------------------------------
-
-  const targetIsAdmin =
-    dto.isAdmin !== undefined
-      ? dto.isAdmin
-      : role.isAdmin;
-
-  // -----------------------------------
-  // CHECK ADMIN ACTIVE STATUS
-  // -----------------------------------
-
-  if (
-    targetIsAdmin &&
-    dto.active === false
-  ) {
-    throw new ForbiddenException(
-      "Administrator roles must remain active",
-    );
-  }
-
-  // -----------------------------------
-  // CHECK REPORTING ROLE
-  // -----------------------------------
-
-  const oldReportsToRoleId =
-    role.reportsToRoleId;
-
-  let reportsToRoleId =
-    dto.reportsToRoleId !== undefined
-      ? dto.reportsToRoleId
-      : role.reportsToRoleId;
-
-  /*
-   * Administrator roles cannot report
-   * to another role.
-   */
-  if (targetIsAdmin) {
-    reportsToRoleId = null;
-  } else {
-    /*
-     * Normal roles must have a
-     * reporting role.
-     */
-    if (reportsToRoleId === null) {
-      throw new ForbiddenException(
-        "A non-administrator role must report to another role",
-      );
-    }
-
-    /*
-     * A role cannot report to itself.
-     */
-    if (
-      reportsToRoleId === roleId
-    ) {
-      throw new ForbiddenException(
-        "A role cannot report to itself",
-      );
-    }
-
-    const reportsToRole =
-      await this.prisma.role.findUnique({
-        where: {
-          id: reportsToRoleId,
-        },
-      });
-
-    if (!reportsToRole) {
       throw new NotFoundException(
-        "Reporting role not found",
+        "Group not found",
       );
     }
 
-    if (!reportsToRole.active) {
+    if (group && !group.active) {
       throw new ForbiddenException(
-        "Cannot report to an inactive role",
+        "Cannot assign an inactive group",
       );
     }
-  }
 
-  // -----------------------------------
-  // UPDATE ROLE DETAILS
-  // -----------------------------------
+    // -----------------------------------
+    // VALIDATE CHILD PERMISSIONS
+    // -----------------------------------
 
-  await this.prisma.role.update({
-    where: {
-      id: roleId,
-    },
+    if (
+      dto.permissionIds !== undefined &&
+      dto.permissionIds.length > 0
+    ) {
+      if (!group) {
+        throw new ForbiddenException(
+          "A group is required when assigning permissions",
+        );
+      }
 
-    data: {
-      ...(dto.name !== undefined && {
-        name: dto.name,
-      }),
+      const allowedPermissionIds =
+        group.permissions.flatMap(
+          (groupPermission) =>
+            groupPermission.permission.children.map(
+              (child) => child.id,
+            ),
+        );
 
-      ...(dto.active !== undefined && {
-        active: dto.active,
-      }),
+      const invalidPermissionIds =
+        dto.permissionIds.filter(
+          (permissionId) =>
+            !allowedPermissionIds.includes(
+              permissionId,
+            ),
+        );
 
-      ...(dto.isAdmin !== undefined && {
-        isAdmin: dto.isAdmin,
-      }),
+      if (
+        invalidPermissionIds.length > 0
+      ) {
+        throw new ForbiddenException(
+          "One or more permissions are not available for this group",
+        );
+      }
+    }
 
-      reportsToRoleId,
+    // -----------------------------------
+    // DETERMINE ADMIN STATUS
+    // -----------------------------------
 
-      /*
-       * Administrator roles do not
-       * belong to groups.
-       */
-      ...(targetIsAdmin
-        ? {
-            groupId: null,
-          }
-        : dto.groupId !== undefined
-          ? {
-              groupId: dto.groupId,
-            }
-          : {}),
-    },
-  });
+    const targetIsAdmin =
+      dto.isAdmin !== undefined
+        ? dto.isAdmin
+        : role.isAdmin;
 
-  // -----------------------------------
-  // CLEAN UP INVALID USER MANAGERS
-  // -----------------------------------
+    // -----------------------------------
+    // CHECK ADMIN ACTIVE STATUS
+    // -----------------------------------
 
-  /*
-   * If this role's reporting role changed,
-   * existing users under this role may now
-   * have invalid managers.
-   *
-   * Example:
-   *
-   * Employee Role
-   * reportsToRole = Manager
-   *
-   * User:
-   * Employee 1 -> Manager A
-   *
-   * Change:
-   * Employee Role
-   * reportsToRole = CEO
-   *
-   * Manager A is no longer valid, so:
-   *
-   * Employee 1 -> null
-   */
+    if (
+      targetIsAdmin &&
+      dto.active === false
+    ) {
+      throw new ForbiddenException(
+        "Administrator roles must remain active",
+      );
+    }
 
-  if (
-    oldReportsToRoleId !==
-    reportsToRoleId
-  ) {
-    const affectedUsers =
-      await this.prisma.user.findMany({
-        where: {
-          roleId,
+    // -----------------------------------
+    // CHECK REPORTING ROLE
+    // -----------------------------------
 
-          managerId: {
-            not: null,
+    const oldReportsToRoleId =
+      role.reportsToRoleId;
+
+    let reportsToRoleId =
+      dto.reportsToRoleId !== undefined
+        ? dto.reportsToRoleId
+        : role.reportsToRoleId;
+
+    if (targetIsAdmin) {
+      reportsToRoleId = null;
+    } else {
+      if (reportsToRoleId === null) {
+        throw new ForbiddenException(
+          "A non-administrator role must report to another role",
+        );
+      }
+
+      if (
+        reportsToRoleId === roleId
+      ) {
+        throw new ForbiddenException(
+          "A role cannot report to itself",
+        );
+      }
+
+      const reportsToRole =
+        await this.prisma.role.findUnique({
+          where: {
+            id: reportsToRoleId,
           },
-        },
+        });
 
-        include: {
-          manager: {
-            select: {
-              roleId: true,
+      if (!reportsToRole) {
+        throw new NotFoundException(
+          "Reporting role not found",
+        );
+      }
+
+      if (!reportsToRole.active) {
+        throw new ForbiddenException(
+          "Cannot report to an inactive role",
+        );
+      }
+    }
+
+    // -----------------------------------
+    // UPDATE ROLE DETAILS
+    // -----------------------------------
+
+    await this.prisma.role.update({
+      where: {
+        id: roleId,
+      },
+
+      data: {
+        ...(dto.name !== undefined && {
+          name: dto.name,
+        }),
+
+        ...(dto.active !== undefined && {
+          active: dto.active,
+        }),
+
+        ...(dto.isAdmin !== undefined && {
+          isAdmin: dto.isAdmin,
+        }),
+
+        reportsToRoleId,
+
+        ...(targetIsAdmin
+          ? {
+              groupId: null,
+            }
+          : dto.groupId !== undefined
+            ? {
+                groupId: dto.groupId,
+              }
+            : {}),
+      },
+    });
+
+    // -----------------------------------
+    // CLEAN UP INVALID USER MANAGERS
+    // -----------------------------------
+
+    if (
+      oldReportsToRoleId !==
+      reportsToRoleId
+    ) {
+      const affectedUsers =
+        await this.prisma.user.findMany({
+          where: {
+            roleId,
+
+            managerId: {
+              not: null,
             },
           },
+
+          include: {
+            manager: {
+              select: {
+                roleId: true,
+              },
+            },
+          },
+        });
+
+      for (const user of affectedUsers) {
+        if (
+          !user.manager ||
+          user.manager.roleId !==
+            reportsToRoleId
+        ) {
+          await this.prisma.user.update({
+            where: {
+              id: user.id,
+            },
+
+            data: {
+              managerId: null,
+            },
+          });
+        }
+      }
+    }
+
+    // -----------------------------------
+    // UPDATE PERMISSIONS
+    // -----------------------------------
+
+    if (targetIsAdmin) {
+      await this.prisma.rolePermission.deleteMany({
+        where: {
+          roleId,
+        },
+      });
+    } else if (
+      dto.permissionIds !== undefined
+    ) {
+      await this.prisma.rolePermission.deleteMany({
+        where: {
+          roleId,
         },
       });
 
-    for (const user of affectedUsers) {
-      /*
-       * The user's manager must have the
-       * newly selected reporting role.
-       *
-       * If not, remove the manager.
-       */
-      if (
-        !user.manager ||
-        user.manager.roleId !==
-          reportsToRoleId
-      ) {
-        await this.prisma.user.update({
-          where: {
-            id: user.id,
-          },
-
-          data: {
-            managerId: null,
-          },
+      if (dto.permissionIds.length > 0) {
+        await this.prisma.rolePermission.createMany({
+          data: dto.permissionIds.map(
+            (permissionId) => ({
+              roleId,
+              permissionId,
+            }),
+          ),
         });
       }
     }
-  }
 
-  // -----------------------------------
-  // UPDATE PERMISSIONS
-  // -----------------------------------
+    // -----------------------------------
+    // GET UPDATED ROLE
+    // -----------------------------------
 
-  if (targetIsAdmin) {
-    await this.prisma.rolePermission.deleteMany({
-      where: {
-        roleId,
-      },
-    });
-  } else if (
-    dto.permissionIds !== undefined
-  ) {
-    await this.prisma.rolePermission.deleteMany({
-      where: {
-        roleId,
-      },
-    });
+    const updatedRole =
+      await this.prisma.role.findUnique({
+        where: {
+          id: roleId,
+        },
 
-    if (dto.permissionIds.length > 0) {
-      await this.prisma.rolePermission.createMany({
-        data: dto.permissionIds.map(
-          (permissionId) => ({
-            roleId,
-            permissionId,
-          }),
-        ),
-      });
-    }
-  }
-
-  // -----------------------------------
-  // RETURN UPDATED ROLE
-  // -----------------------------------
-
-  return this.prisma.role.findUnique({
-    where: {
-      id: roleId,
-    },
-
-    include: {
-      group: true,
-
-      reportsToRole: true,
-
-      subordinateRoles: true,
-
-      users: {
         include: {
-          manager: {
-            select: {
-              id: true,
-              name: true,
-              roleId: true,
+          group: true,
+
+          reportsToRole: true,
+
+          subordinateRoles: true,
+
+          users: {
+            include: {
+              manager: {
+                select: {
+                  id: true,
+                  name: true,
+                  roleId: true,
+                },
+              },
+
+              role: true,
             },
           },
 
-          role: true,
+          permissions: {
+            include: {
+              permission: true,
+            },
+          },
         },
+      });
+
+    if (!updatedRole) {
+      throw new NotFoundException(
+        "Updated role not found",
+      );
+    }
+
+    // -----------------------------------
+    // ROLE UPDATED AUDIT
+    // -----------------------------------
+
+    await this.auditLogsService.log({
+      actorId: currentUserId,
+      action: AuditAction.ROLE_UPDATED,
+      entity: "Role",
+      entityId: updatedRole.id,
+      description:
+        `Role ${updatedRole.name} was updated`,
+
+      oldValues: {
+        name: role.name,
+        group:
+          role.group?.name ??
+          null,
+        reportsToRole:
+          role.reportsToRole?.name ??
+          null,
+        active: role.active,
+        isAdmin: role.isAdmin,
       },
 
-      permissions: {
-        include: {
-          permission: true,
-        },
+      newValues: {
+        name: updatedRole.name,
+        group:
+          updatedRole.group?.name ??
+          null,
+        reportsToRole:
+          updatedRole.reportsToRole?.name ??
+          null,
+        active: updatedRole.active,
+        isAdmin: updatedRole.isAdmin,
       },
-    },
-  });
-}
+
+      ipAddress:
+        req.ip ||
+        req.headers["x-forwarded-for"] ||
+        null,
+
+      userAgent:
+        req.headers["user-agent"] ||
+        null,
+    });
+
+    // -----------------------------------
+    // ROLE STATUS CHANGED AUDIT
+    // -----------------------------------
+
+    if (
+      role.active !==
+      updatedRole.active
+    ) {
+      await this.auditLogsService.log({
+        actorId: currentUserId,
+        action:
+          AuditAction.ROLE_STATUS_CHANGED,
+        entity: "Role",
+        entityId: updatedRole.id,
+        description:
+          `Role ${updatedRole.name} status was changed`,
+
+        oldValues: {
+          active: role.active,
+        },
+
+        newValues: {
+          active: updatedRole.active,
+        },
+
+        ipAddress:
+          req.ip ||
+          req.headers["x-forwarded-for"] ||
+          null,
+
+        userAgent:
+          req.headers["user-agent"] ||
+          null,
+      });
+    }
+
+    // -----------------------------------
+    // ROLE PERMISSIONS CHANGED AUDIT
+    // -----------------------------------
+
+    const oldPermissionNames =
+      role.permissions
+        .map(
+          (rolePermission) =>
+            rolePermission.permission.name,
+        )
+        .sort();
+
+    const newPermissionNames =
+      updatedRole.permissions
+        .map(
+          (rolePermission) =>
+            rolePermission.permission.name,
+        )
+        .sort();
+
+    const permissionsChanged =
+      oldPermissionNames.length !==
+        newPermissionNames.length ||
+      oldPermissionNames.some(
+        (permission, index) =>
+          permission !==
+          newPermissionNames[index],
+      );
+
+    if (permissionsChanged) {
+      await this.auditLogsService.log({
+        actorId: currentUserId,
+        action:
+          AuditAction.ROLE_PERMISSIONS_CHANGED,
+        entity: "Role",
+        entityId: updatedRole.id,
+        description:
+          `Role ${updatedRole.name} permissions were changed`,
+
+        oldValues: {
+          permissions:
+            oldPermissionNames,
+        },
+
+        newValues: {
+          permissions:
+            newPermissionNames,
+        },
+
+        ipAddress:
+          req.ip ||
+          req.headers["x-forwarded-for"] ||
+          null,
+
+        userAgent:
+          req.headers["user-agent"] ||
+          null,
+      });
+    }
+
+    return updatedRole;
+  }
 
   // -----------------------------------
   // TOGGLE ROLE STATUS
@@ -789,6 +1032,7 @@ async update(
   async toggleStatus(
     roleId: number,
     currentUserId: number,
+    req: any,
   ) {
     await this.verifyAdmin(
       currentUserId,
@@ -798,6 +1042,10 @@ async update(
       await this.prisma.role.findUnique({
         where: {
           id: roleId,
+        },
+
+        include: {
+          group: true,
         },
       });
 
@@ -813,31 +1061,65 @@ async update(
       );
     }
 
-    return this.prisma.role.update({
-      where: {
-        id: roleId,
-      },
+    const updatedRole =
+      await this.prisma.role.update({
+        where: {
+          id: roleId,
+        },
 
-      data: {
-        active: !role.active,
-      },
+        data: {
+          active: !role.active,
+        },
 
-      include: {
-        group: true,
+        include: {
+          group: true,
 
-        reportsToRole: true,
+          reportsToRole: true,
 
-        subordinateRoles: true,
+          subordinateRoles: true,
 
-        users: true,
+          users: true,
 
-        permissions: {
-          include: {
-            permission: true,
+          permissions: {
+            include: {
+              permission: true,
+            },
           },
         },
+      });
+
+    // -----------------------------------
+    // ROLE STATUS CHANGED AUDIT
+    // -----------------------------------
+
+    await this.auditLogsService.log({
+      actorId: currentUserId,
+      action:
+        AuditAction.ROLE_STATUS_CHANGED,
+      entity: "Role",
+      entityId: updatedRole.id,
+      description:
+        `Role ${updatedRole.name} status was changed`,
+
+      oldValues: {
+        active: role.active,
       },
+
+      newValues: {
+        active: updatedRole.active,
+      },
+
+      ipAddress:
+        req.ip ||
+        req.headers["x-forwarded-for"] ||
+        null,
+
+      userAgent:
+        req.headers["user-agent"] ||
+        null,
     });
+
+    return updatedRole;
   }
 
   // -----------------------------------
@@ -847,6 +1129,7 @@ async update(
   async remove(
     roleId: number,
     currentUserId: number,
+    req: any,
   ) {
     await this.verifyAdmin(
       currentUserId,
@@ -860,6 +1143,16 @@ async update(
 
         include: {
           users: true,
+
+          group: true,
+
+          reportsToRole: true,
+
+          permissions: {
+            include: {
+              permission: true,
+            },
+          },
         },
       });
 
@@ -888,6 +1181,45 @@ async update(
         "Cannot delete a role that has users assigned to it",
       );
     }
+
+    // -----------------------------------
+    // AUDIT ROLE DELETED
+    // -----------------------------------
+
+    await this.auditLogsService.log({
+      actorId: currentUserId,
+      action: AuditAction.ROLE_DELETED,
+      entity: "Role",
+      entityId: role.id,
+      description:
+        `Role ${role.name} was deleted`,
+
+      oldValues: {
+        name: role.name,
+        group:
+          role.group?.name ??
+          null,
+        reportsToRole:
+          role.reportsToRole?.name ??
+          null,
+        active: role.active,
+        isAdmin: role.isAdmin,
+        permissions:
+          role.permissions.map(
+            (rolePermission) =>
+              rolePermission.permission.name,
+          ),
+      },
+
+      ipAddress:
+        req.ip ||
+        req.headers["x-forwarded-for"] ||
+        null,
+
+      userAgent:
+        req.headers["user-agent"] ||
+        null,
+    });
 
     // -----------------------------------
     // DELETE ROLE
@@ -997,6 +1329,7 @@ async update(
     roleId: number,
     permissionIds: number[],
     currentUserId: number,
+    req: any,
   ) {
     await this.verifyAdmin(
       currentUserId,
@@ -1007,6 +1340,14 @@ async update(
         where: {
           id: roleId,
         },
+
+        include: {
+          permissions: {
+            include: {
+              permission: true,
+            },
+          },
+        },
       });
 
     if (!role) {
@@ -1015,10 +1356,9 @@ async update(
       );
     }
 
-    /*
-     * Make sure every permission actually
-     * exists before creating relations.
-     */
+    // -----------------------------------
+    // VALIDATE PERMISSIONS
+    // -----------------------------------
 
     if (permissionIds.length > 0) {
       const permissions =
@@ -1044,9 +1384,21 @@ async update(
       }
     }
 
-    /*
-     * Remove current permissions.
-     */
+    // -----------------------------------
+    // CAPTURE OLD PERMISSIONS
+    // -----------------------------------
+
+    const oldPermissionNames =
+      role.permissions
+        .map(
+          (rolePermission) =>
+            rolePermission.permission.name,
+        )
+        .sort();
+
+    // -----------------------------------
+    // REMOVE CURRENT PERMISSIONS
+    // -----------------------------------
 
     await this.prisma.rolePermission.deleteMany({
       where: {
@@ -1054,9 +1406,9 @@ async update(
       },
     });
 
-    /*
-     * Add new permissions.
-     */
+    // -----------------------------------
+    // ADD NEW PERMISSIONS
+    // -----------------------------------
 
     if (permissionIds.length > 0) {
       await this.prisma.rolePermission.createMany({
@@ -1069,27 +1421,96 @@ async update(
       });
     }
 
-    return this.prisma.role.findUnique({
-      where: {
-        id: roleId,
-      },
+    // -----------------------------------
+    // GET UPDATED ROLE
+    // -----------------------------------
 
-      include: {
-        group: true,
+    const updatedRole =
+      await this.prisma.role.findUnique({
+        where: {
+          id: roleId,
+        },
 
-        reportsToRole: true,
+        include: {
+          group: true,
 
-        subordinateRoles: true,
+          reportsToRole: true,
 
-        users: true,
+          subordinateRoles: true,
 
-        permissions: {
-          include: {
-            permission: true,
+          users: true,
+
+          permissions: {
+            include: {
+              permission: true,
+            },
           },
         },
-      },
-    });
+      });
+
+    if (!updatedRole) {
+      throw new NotFoundException(
+        "Updated role not found",
+      );
+    }
+
+    // -----------------------------------
+    // NEW PERMISSIONS
+    // -----------------------------------
+
+    const newPermissionNames =
+      updatedRole.permissions
+        .map(
+          (rolePermission) =>
+            rolePermission.permission.name,
+        )
+        .sort();
+
+    // -----------------------------------
+    // AUDIT ROLE PERMISSIONS CHANGED
+    // -----------------------------------
+
+    const permissionsChanged =
+      oldPermissionNames.length !==
+        newPermissionNames.length ||
+      oldPermissionNames.some(
+        (permission, index) =>
+          permission !==
+          newPermissionNames[index],
+      );
+
+    if (permissionsChanged) {
+      await this.auditLogsService.log({
+        actorId: currentUserId,
+        action:
+          AuditAction.ROLE_PERMISSIONS_CHANGED,
+        entity: "Role",
+        entityId: updatedRole.id,
+        description:
+          `Role ${updatedRole.name} permissions were changed`,
+
+        oldValues: {
+          permissions:
+            oldPermissionNames,
+        },
+
+        newValues: {
+          permissions:
+            newPermissionNames,
+        },
+
+        ipAddress:
+          req.ip ||
+          req.headers["x-forwarded-for"] ||
+          null,
+
+        userAgent:
+          req.headers["user-agent"] ||
+          null,
+      });
+    }
+
+    return updatedRole;
   }
 
   // -----------------------------------

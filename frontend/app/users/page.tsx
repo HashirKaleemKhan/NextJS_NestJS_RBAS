@@ -1,19 +1,41 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import {
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
 
 import { api } from "@/lib/api";
-import { getUser, logout } from "@/lib/auth";
+import { getUser } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
-import "../roles/roles.css";
+import ConfirmModal from "@/components/ConfirmModal";
+
+type Group = {
+  id: number;
+  name: string;
+  active: boolean;
+};
+
+type Role = {
+  id: number;
+  name: string;
+  level: number;
+  isAdmin: boolean;
+  active: boolean;
+  groupId: number | null;
+  group?: Group | null;
+};
 
 type User = {
   id: number;
   name: string;
   email: string;
+  createdAt: string;
+  active: boolean;
 
   role?: {
+    id?: number;
     name: string;
     level?: number;
     active: boolean;
@@ -29,63 +51,371 @@ type CurrentUser = {
   id: number;
   name: string;
   role?: string;
+  isAdmin?: boolean;
   permissions?: string[];
+};
+
+type Pagination = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
 };
 
 export default function UsersPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [users, setUsers] = useState<User[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
 
   const [currentUser, setCurrentUser] =
     useState<CurrentUser | null>(null);
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] =
+    useState(true);
 
-  const [error, setError] = useState("");
+  const [pageLoading, setPageLoading] =
+    useState(false);
 
-  const [search, setSearch] = useState("");
+  const [error, setError] =
+    useState("");
+
+  const [deleteTarget, setDeleteTarget] =
+    useState<User | null>(null);
+
+  const [deleteLoading, setDeleteLoading] =
+    useState(false);
+
+  const [search, setSearch] =
+    useState("");
+
+  const [sessionSuccess, setSessionSuccess] =
+    useState("");
+
+  const [pagination, setPagination] =
+    useState<Pagination>({
+      page: 1,
+      limit: 10,
+      total: 0,
+      totalPages: 0,
+    });
+
+  const success =
+    searchParams.get("success");
 
   // -----------------------------------
   // LOAD USERS
   // -----------------------------------
 
+  async function loadUsers(page: number) {
+    const usersResponse = await api.get(
+      "/users",
+      {
+        params: {
+          page,
+          limit: 10,
+        },
+      },
+    );
+
+    const response = usersResponse.data;
+
+    const userList = Array.isArray(response)
+      ? response
+      : Array.isArray(response?.data)
+        ? response.data
+        : [];
+
+    setUsers(userList);
+
+    setPagination({
+      page: response?.page ?? page,
+      limit: response?.limit ?? 10,
+      total:
+        response?.total ??
+        userList.length,
+      totalPages:
+        response?.totalPages ??
+        Math.ceil(
+          (response?.total ??
+            userList.length) /
+            (response?.limit ?? 10),
+        ),
+    });
+  }
+
+  // -----------------------------------
+  // INITIAL LOAD
+  // -----------------------------------
+
   useEffect(() => {
-    const token = localStorage.getItem("token");
+    const token =
+      localStorage.getItem("token");
 
     if (!token) {
       router.replace("/login");
       return;
     }
 
-    const user = getUser() as CurrentUser | null;
+    const user =
+      getUser() as CurrentUser | null;
 
     setCurrentUser(user);
 
-    async function loadUsers() {
+    async function loadData() {
       try {
-        const response = await api.get("/users");
+        setLoading(true);
+        setError("");
 
-        setUsers(response.data);
+        await loadUsers(1);
+
+        try {
+          const rolesResponse = await api.get("/roles", {
+          params: {
+            page: 1,
+            limit: 100,
+          },
+        });
+
+        const rolesData = rolesResponse.data;
+
+        const roleList = Array.isArray(rolesData)
+          ? rolesData
+          : Array.isArray(rolesData?.data)
+            ? rolesData.data
+            : [];
+
+        setRoles(roleList);
+        } catch {
+          setRoles([]);
+        }
+
+        try {
+          const groupsResponse =
+          await api.get<{
+            data: Group[];
+            pagination: {
+              page: number;
+              limit: number;
+              total: number;
+              totalPages: number;
+            };
+          }>("/groups", {
+            params: {
+              page: 1,
+              limit: 100,
+            },
+          });
+
+        setGroups(groupsResponse.data.data);
+        } catch {
+          setGroups([]);
+        }
       } catch (err: any) {
-        if (err?.response?.status === 401) {
+        if (
+          err?.response?.status === 401
+        ) {
           router.replace("/login");
           return;
         }
 
-        if (err?.response?.status === 403) {
-          router.replace("/dashboard");
-          return;
-        }
-
-        setError("Unable to load users.");
+        setError(
+          err?.response?.data?.message ||
+            "Unable to load users.",
+        );
       } finally {
         setLoading(false);
       }
     }
 
-    loadUsers();
+    loadData();
   }, [router]);
+
+  // -----------------------------------
+  // LOAD PAGE
+  // -----------------------------------
+
+  useEffect(() => {
+    /*
+     * Page 1 is already loaded by the
+     * initial load above.
+     *
+     * Every later page change, including
+     * returning from page 2 to page 1,
+     * must fetch the requested page.
+     */
+    if (pagination.page === 1) {
+      return;
+    }
+
+    async function loadPage() {
+      try {
+        setPageLoading(true);
+        setError("");
+
+        await loadUsers(
+          pagination.page,
+        );
+
+        window.scrollTo({
+          top: 0,
+          behavior: "smooth",
+        });
+      } catch (err: any) {
+        if (
+          err?.response?.status === 401
+        ) {
+          router.replace("/login");
+          return;
+        }
+
+        setError(
+          err?.response?.data?.message ||
+            "Unable to load users.",
+        );
+      } finally {
+        setPageLoading(false);
+      }
+    }
+
+    loadPage();
+  }, [
+    pagination.page,
+    router,
+  ]);
+
+  /*
+   * When returning to page 1, the effect
+   * above intentionally does not run because
+   * page 1 was loaded during the initial load.
+   *
+   * We therefore explicitly reload page 1
+   * from the pagination control.
+   */
+
+  // -----------------------------------
+  // RELOAD PAGE
+  // -----------------------------------
+
+  async function changePage(
+    nextPage: number,
+  ) {
+    if (
+      nextPage < 1 ||
+      nextPage >
+        pagination.totalPages
+    ) {
+      return;
+    }
+
+    if (
+      nextPage ===
+      pagination.page
+    ) {
+      return;
+    }
+
+    try {
+      setPageLoading(true);
+      setError("");
+
+      window.scrollTo({
+        top: 0,
+        behavior: "smooth",
+      });
+
+      await loadUsers(nextPage);
+    } catch (err: any) {
+      if (
+        err?.response?.status === 401
+      ) {
+        router.replace("/login");
+        return;
+      }
+
+      setError(
+        err?.response?.data?.message ||
+          "Unable to load users.",
+      );
+    } finally {
+      setPageLoading(false);
+    }
+  }
+
+  // -----------------------------------
+  // SESSION SUCCESS MESSAGE
+  // -----------------------------------
+
+  useEffect(() => {
+    const message =
+      sessionStorage.getItem(
+        "usersSuccessMessage",
+      );
+
+    if (!message) {
+      return;
+    }
+
+    sessionStorage.removeItem(
+      "usersSuccessMessage",
+    );
+
+    setSessionSuccess(message);
+
+    const timer = setTimeout(() => {
+      setSessionSuccess("");
+    }, 3500);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, []);
+
+  // -----------------------------------
+  // URL SUCCESS MESSAGE
+  // -----------------------------------
+
+  useEffect(() => {
+    if (!success) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      router.replace("/users");
+    }, 3500);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [success, router]);
+
+  // -----------------------------------
+  // SUCCESS MESSAGE TEXT
+  // -----------------------------------
+
+  function getSuccessMessage() {
+    switch (success) {
+      case "created":
+        return "User created successfully.";
+
+      case "updated":
+        return "User updated successfully.";
+
+      case "deleted":
+        return "User deleted successfully.";
+
+      case "activated":
+        return "User activated successfully.";
+
+      case "deactivated":
+        return "User deactivated successfully.";
+
+      default:
+        return "";
+    }
+  }
 
   // -----------------------------------
   // PERMISSIONS
@@ -95,104 +425,364 @@ export default function UsersPage() {
     currentUser?.permissions || [];
 
   const canCreateUsers =
-    userPermissions.includes("users.create");
-
-  const canUpdateUsers =
-    userPermissions.includes("users.update");
-
-  const canDeleteUsers =
-    userPermissions.includes("users.delete");
-
-  // -----------------------------------
-  // STATISTICS
-  // -----------------------------------
-
-  const totalUsers = users.length;
-
-  const activeUsers = users.filter(
-    (user) => user.role?.active === true,
-  ).length;
-
-  const inactiveUsers = users.filter(
-    (user) => user.role?.active !== true,
-  ).length;
-
-  // -----------------------------------
-  // DELETE USER
-  // -----------------------------------
-
-  async function deleteUser(user: User) {
-    const confirmed = window.confirm(
-      `Are you sure you want to delete ${user.name}?`,
+    userPermissions.includes(
+      "users.create",
     );
 
-    if (!confirmed) {
-      return;
+  const canUpdateUsers =
+    userPermissions.includes(
+      "users.update",
+    );
+
+  const canDeleteUsers =
+    userPermissions.includes(
+      "users.delete",
+    );
+
+  // -----------------------------------
+  // GET ROLE
+  // -----------------------------------
+
+  function getRole(user: User) {
+    if (!user.role) {
+      return undefined;
     }
 
-    try {
-      await api.delete(`/users/${user.id}`);
-
-      setUsers((currentUsers) =>
-        currentUsers.filter(
-          (currentUser) =>
-            currentUser.id !== user.id,
-        ),
-      );
-    } catch (err: any) {
-      alert(
-        err?.response?.data?.message ||
-          "Unable to delete user.",
+    if (
+      user.role.id !== undefined
+    ) {
+      return roles.find(
+        (role) =>
+          role.id ===
+          user.role?.id,
       );
     }
+
+    return roles.find(
+      (role) =>
+        role.name ===
+        user.role?.name,
+    );
   }
 
   // -----------------------------------
-  // EDIT USER
+  // GET GROUP
   // -----------------------------------
 
-  function editUser(user: User) {
-    router.push(`/users/${user.id}/edit`);
+  function getGroupName(
+    user: User,
+  ) {
+    const role =
+      getRole(user);
+
+    if (role?.isAdmin) {
+      return "System Administration";
+    }
+
+    if (!role?.groupId) {
+      return "Unassigned";
+    }
+
+    return (
+      groups.find(
+        (group) =>
+          group.id ===
+          role.groupId,
+      )?.name ||
+      "Unassigned"
+    );
   }
+
+  // -----------------------------------
+  // GET REPORTS TO
+  // -----------------------------------
+
+  function getReportsTo(
+    user: User,
+  ) {
+    if (user.manager) {
+      return user.manager.name;
+    }
+
+    return "Unassigned";
+  }
+
+  // -----------------------------------
+  // FILTER USERS
+  // -----------------------------------
+
+  const filteredUsers =
+    useMemo(() => {
+      const query =
+        search
+          .toLowerCase()
+          .trim();
+
+      if (!query) {
+        return users;
+      }
+
+      return users.filter(
+        (user) => {
+          const groupName =
+            getGroupName(user);
+
+          const reportsTo =
+            getReportsTo(user);
+
+          return [
+            user.name,
+            user.email,
+            user.role?.name,
+            groupName,
+            reportsTo,
+          ]
+            .filter(Boolean)
+            .some((value) =>
+              value!
+                .toLowerCase()
+                .includes(query),
+            );
+        },
+      );
+    }, [
+      users,
+      roles,
+      groups,
+      search,
+    ]);
 
   // -----------------------------------
   // SEARCH
   // -----------------------------------
 
-  const filteredUsers = useMemo(() => {
-    const query = search
-      .toLowerCase()
-      .trim();
+  function handleSearch(
+    value: string,
+  ) {
+    setSearch(value);
 
-    if (!query) {
-      return users;
+    if (pagination.page !== 1) {
+      setPagination((current) => ({
+        ...current,
+        page: 1,
+      }));
+
+      /*
+       * Search resets to page 1.
+       * Explicitly reload page 1 because
+       * page 1 is already the current state
+       * after setPagination.
+       */
+      loadUsers(1).catch((err: any) => {
+        setError(
+          err?.response?.data?.message ||
+            "Unable to load users.",
+        );
+      });
+
+      window.scrollTo({
+        top: 0,
+        behavior: "smooth",
+      });
     }
-
-    return users.filter((user) =>
-      [
-        user.name,
-        user.email,
-        user.role?.name,
-        user.manager?.name,
-      ]
-        .filter(Boolean)
-        .some((value) =>
-          value!
-            .toLowerCase()
-            .includes(query),
-        ),
-    );
-  }, [users, search]);
+  }
 
   // -----------------------------------
-  // LOADING
+  // TOGGLE USER STATUS
+  // -----------------------------------
+
+  async function toggleUserStatus(
+    user: User,
+  ) {
+    const role =
+      getRole(user);
+
+    const isProtectedAdmin =
+      currentUser?.role === "Admin" &&
+      role?.isAdmin === true;
+
+    if (isProtectedAdmin) {
+      setError(
+        "Administrators cannot manage other administrators.",
+      );
+      return;
+    }
+
+    if (
+      user.id ===
+      currentUser?.id
+    ) {
+      setError(
+        "You cannot change your own account status.",
+      );
+      return;
+    }
+
+    try {
+      setError("");
+
+      const newActiveStatus =
+        !user.active;
+
+      await api.patch(
+        `/users/${user.id}/status`,
+        {
+          active:
+            newActiveStatus,
+        },
+      );
+
+      setUsers(
+        (currentUsers) =>
+          currentUsers.map(
+            (item) =>
+              item.id === user.id
+                ? {
+                    ...item,
+                    active:
+                      newActiveStatus,
+                  }
+                : item,
+          ),
+      );
+
+      router.replace(
+        `/users?success=${
+          newActiveStatus
+            ? "activated"
+            : "deactivated"
+        }`,
+      );
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.message ||
+          "Unable to update user status.",
+      );
+    }
+  }
+
+  // -----------------------------------
+  // DELETE USER
+  // -----------------------------------
+
+  function deleteUser(user: User) {
+    if (
+      user.id ===
+      currentUser?.id
+    ) {
+      setError(
+        "You cannot delete yourself.",
+      );
+      return;
+    }
+
+    const role =
+      getRole(user);
+
+    const isProtectedAdmin =
+      currentUser?.role === "Admin" &&
+      role?.isAdmin === true;
+
+    if (isProtectedAdmin) {
+      setError(
+        "You cannot delete another Admin.",
+      );
+      return;
+    }
+
+    setError("");
+    setDeleteTarget(user);
+  }
+
+  // -----------------------------------
+  // CONFIRM DELETE USER
+  // -----------------------------------
+
+  async function confirmDeleteUser() {
+    if (!deleteTarget) {
+      return;
+    }
+
+    try {
+      setDeleteLoading(true);
+      setError("");
+
+      await api.delete(
+        `/users/${deleteTarget.id}`,
+      );
+
+      setUsers(
+        (currentUsers) =>
+          currentUsers.filter(
+            (currentUser) =>
+              currentUser.id !==
+              deleteTarget.id,
+          ),
+      );
+
+      setDeleteTarget(null);
+
+      router.replace(
+        "/users?success=deleted",
+      );
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.message ||
+          "Unable to delete user.",
+      );
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
+
+  // -----------------------------------
+  // COUNTS
+  // -----------------------------------
+
+  const totalUsers =
+    pagination.total;
+
+  const activeUsers =
+    users.filter(
+      (user) => user.active,
+    ).length;
+
+  const inactiveUsers =
+    users.filter(
+      (user) => !user.active,
+    ).length;
+
+  // -----------------------------------
+  // PAGINATION
+  // -----------------------------------
+
+  const showingFrom =
+    pagination.total === 0
+      ? 0
+      : (pagination.page - 1) *
+          pagination.limit +
+        1;
+
+  const showingTo =
+    Math.min(
+      pagination.page *
+        pagination.limit,
+      pagination.total,
+    );
+
+  // -----------------------------------
+  // INITIAL LOADING
   // -----------------------------------
 
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="page-loading">
-          Loading users...
+        <div className="company-page-loading">
+          <div className="company-loading-spinner" />
+
+          <span>
+            Loading users...
+          </span>
         </div>
       </DashboardLayout>
     );
@@ -204,329 +794,578 @@ export default function UsersPage() {
 
   return (
     <DashboardLayout>
-      <div className="page-header">
-        <div>
-          <div className="page-eyebrow">
-            USER MANAGEMENT
-          </div>
+      <div className="company-users-page">
 
-          <h1>Users</h1>
+        {/* PAGE HEADER */}
 
-          <p>
-            Manage users and their access
-            to the application.
-          </p>
-        </div>
-
-        <div className="page-header-actions">
-          {canCreateUsers && (
-            <button
-              className="button button-primary"
-              onClick={() =>
-                router.push("/users/create")
-              }
-            >
-              Create user
-            </button>
-          )}
-
-          <button
-            className="button button-secondary"
-            onClick={logout}
-          >
-            Logout
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="alert-error">
-          {error}
-        </div>
-      )}
-
-      {/* -------------------------------- */}
-      {/* USER STATISTICS */}
-      {/* -------------------------------- */}
-
-      <div className="stats-grid">
-        {/* TOTAL */}
-
-        <div className="stat-card stat-card-total">
-            <div className="stat-card-content">
-              <span className="stat-card-label">
-                Total Users
-              </span>
-
-              <strong className="stat-card-value">
-                {totalUsers}
-              </strong>
-
-              <span className="stat-card-description">
-                Users in your management scope
-              </span>
-            </div>
-          </div>
-
-        {/* ACTIVE */}
-
-          <div className="stat-card stat-card-active">
-            <div className="stat-card-content">
-              <span className="stat-card-label">
-                Active
-              </span>
-
-              <strong className="stat-card-value">
-                {activeUsers}
-              </strong>
-
-              <span className="stat-card-description">
-                Active Users
-              </span>
-            </div>
-          </div>
-
-          {/* INACTIVE */}
-
-          <div className="stat-card stat-card-inactive">
-            <div className="stat-card-content">
-              <span className="stat-card-label">
-                Inactive
-              </span>
-
-              <strong className="stat-card-value">
-                {inactiveUsers}
-              </strong>
-
-              <span className="stat-card-description">
-                Disabled Users
-              </span>
-            </div>
-          </div>
-      </div>
-
-      {/* -------------------------------- */}
-      {/* USERS LIST */}
-      {/* -------------------------------- */}
-
-      <div className="content-card users-card">
-        <div className="users-toolbar">
+        <div className="company-page-header">
           <div>
-            <h2>All users</h2>
+            <div className="company-page-eyebrow">
+              USER MANAGEMENT
+            </div>
+
+            <h1>
+              Users
+            </h1>
 
             <p>
-              {users.length}{" "}
-              {users.length === 1
-                ? "user"
-                : "users"}{" "}
-              in your management scope
+              Manage all users in your system.
             </p>
           </div>
 
-          <div className="search-wrapper">
-            <span className="search-icon">
-              ⌕
-            </span>
+          <div className="company-page-actions">
+            {canCreateUsers && (
+              <button
+                type="button"
+                className="company-primary-button"
+                onClick={() =>
+                  router.push(
+                    "/users/create",
+                  )
+                }
+              >
+                <span className="company-button-plus">
+                  +
+                </span>
 
-            <input
-              className="search-input"
-              placeholder="Search users..."
-              value={search}
-              onChange={(e) =>
-                setSearch(e.target.value)
-              }
-            />
+                Add User
+              </button>
+            )}
           </div>
         </div>
 
-        {/* -------------------------------- */}
-        {/* EMPTY STATE */}
-        {/* -------------------------------- */}
+        {/* SUCCESS */}
 
-        {filteredUsers.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon">
+        {sessionSuccess ? (
+          <div className="company-users-success">
+            ✓ {sessionSuccess}
+          </div>
+        ) : success &&
+          getSuccessMessage() ? (
+          <div className="company-users-success">
+            ✓ {getSuccessMessage()}
+          </div>
+        ) : null}
+
+        {/* ERROR */}
+
+        {error && (
+          <div className="company-users-error">
+            {error}
+          </div>
+        )}
+
+        {/* USER STATISTICS */}
+
+        <div className="company-user-stats">
+
+          <div className="company-user-stat-card">
+            <div className="company-user-stat-icon company-user-stat-icon-blue">
               ◉
             </div>
 
-            <h3>No users found</h3>
+            <div className="company-user-stat-content">
+              <span>
+                Total Users
+              </span>
 
-            <p>
-              {search
-                ? "Try changing your search."
-                : "There are no users to display."}
-            </p>
+              <strong>
+                {totalUsers}
+              </strong>
+
+              <small>
+                Users configured in the system
+              </small>
+            </div>
           </div>
-        ) : (
-          /* -------------------------------- */
-          /* USERS TABLE */
-          /* -------------------------------- */
 
-          <div className="table-wrapper">
-            <table className="users-table">
-              <thead>
-                <tr>
-                  <th>USER</th>
+          <div className="company-user-stat-card">
+            <div className="company-user-stat-icon company-user-stat-icon-green">
+              ✓
+            </div>
 
-                  <th>EMAIL</th>
+            <div className="company-user-stat-content">
+              <span>
+                Active users
+              </span>
 
-                  <th>ROLE</th>
+              <strong>
+                {activeUsers}
+              </strong>
 
-                  <th>REPORTS TO</th>
+              <small>
+                Active users on this page
+              </small>
+            </div>
+          </div>
 
-                  <th>STATUS</th>
+          <div className="company-user-stat-card">
+            <div className="company-user-stat-icon company-user-stat-icon-gold">
+              ○
+            </div>
 
-                  {(canUpdateUsers ||
-                    canDeleteUsers) && (
-                    <th>ACTIONS</th>
-                  )}
-                </tr>
-              </thead>
+            <div className="company-user-stat-content">
+              <span>
+                Inactive users
+              </span>
 
-              <tbody>
-                {filteredUsers.map((user) => (
-                  <tr key={user.id}>
-                    {/* USER */}
+              <strong>
+                {inactiveUsers}
+              </strong>
 
-                    <td>
-                      <div className="user-cell">
-                        <div className="user-avatar">
-                          {user.name
-                            .charAt(0)
-                            .toUpperCase()}
-                        </div>
+              <small>
+                Inactive users on this page
+              </small>
+            </div>
+          </div>
 
-                        <div>
-                          <div className="user-name">
-                            {user.name}
-                          </div>
+        </div>
 
-                          <div className="user-id">
-                            ID #{user.id}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
+        {/* USERS PANEL */}
 
-                    {/* EMAIL */}
+        <div className="company-users-panel">
 
-                    <td>
-                      <span className="email-text">
-                        {user.email}
-                      </span>
-                    </td>
+          {/* PANEL HEADER */}
 
-                    {/* ROLE */}
+          <div className="company-users-panel-header">
+            <div>
+              <div className="company-panel-eyebrow">
+                CONFIGURATION
+              </div>
 
-                    <td>
-                      <span
-                        className={`role-badge role-${user.role?.name?.toLowerCase()}`}
-                      >
-                        {user.role?.name ||
-                          "Developer"}
-                      </span>
-                    </td>
+              <h2>
+                All users
+              </h2>
 
-                    {/* REPORTS TO */}
+              <p>
+                {pagination.total}{" "}
+                {pagination.total === 1
+                  ? "user"
+                  : "users"}{" "}
+                found
+              </p>
+            </div>
 
-                    <td>
-                      {user.manager ? (
-                        <div>
-                          <div className="user-name">
-                            {
-                              user.manager
-                                .name
-                            }
-                          </div>
+            <div className="company-users-search">
+              <span className="company-users-search-icon">
+                ⌕
+              </span>
 
-                          <div className="user-id">
-                            ID #
-                            {
-                              user.manager
-                                .id
-                            }
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="current-user-label">
-                          TOP LEVEL
-                        </span>
-                      )}
-                    </td>
+              <input
+                type="text"
+                placeholder="Search users..."
+                value={search}
+                onChange={(event) =>
+                  handleSearch(
+                    event.target.value,
+                  )
+                }
+              />
 
-                    {/* STATUS */}
+              {search && (
+                <button
+                  type="button"
+                  className="company-users-search-clear"
+                  onClick={() =>
+                    handleSearch("")
+                  }
+                  aria-label="Clear search"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          </div>
 
-                    <td>
-                      {user.role?.active ? (
-                        <span className="status-badge status-active">
-                          <span className="status-dot" />
+          {/* PAGE LOADING */}
 
-                          Active
-                        </span>
-                      ) : (
-                        <span className="status-badge status-inactive">
-                          <span className="status-dot" />
+          {pageLoading && (
+            <div className="company-users-page-loading-overlay">
+              <div className="company-loading-spinner" />
+            </div>
+          )}
 
-                          Inactive
-                        </span>
-                      )}
-                    </td>
+          {/* EMPTY */}
 
-                    {/* ACTIONS */}
+          {filteredUsers.length ===
+          0 ? (
+            <div className="company-users-empty">
+              <div className="company-users-empty-icon">
+                ◉
+              </div>
+
+              <h3>
+                No users found
+              </h3>
+
+              <p>
+                {search
+                  ? "Try changing your search."
+                  : "No users found."}
+              </p>
+            </div>
+          ) : (
+
+            /* TABLE */
+
+            <div className="company-users-table-wrapper">
+              <table className="company-users-table">
+
+                <thead>
+                  <tr>
+                    <th>
+                      USER
+                    </th>
+
+                    <th>
+                      ROLE
+                    </th>
+
+                    <th>
+                      GROUP
+                    </th>
+
+                    <th>
+                      REPORTS TO
+                    </th>
+
+                    <th>
+                      STATUS
+                    </th>
 
                     {(canUpdateUsers ||
                       canDeleteUsers) && (
-                      <td>
-                        <div className="user-actions">
-                          {/* EDIT */}
-
-                          {canUpdateUsers &&
-                            !(
-                              currentUser?.role ===
-                                "Admin" &&
-                              user.role?.name ===
-                                "Admin"
-                            ) && (
-                              <button
-                                className="edit-button"
-                                onClick={() =>
-                                  editUser(user)
-                                }
-                              >
-                                Edit
-                              </button>
-                            )}
-
-                          {/* DELETE */}
-
-                          {canDeleteUsers &&
-                            !(
-                              currentUser?.role ===
-                                "Admin" &&
-                              user.role?.name ===
-                                "Admin"
-                            ) && (
-                              <button
-                                className="delete-button"
-                                onClick={() =>
-                                  deleteUser(
-                                    user,
-                                  )
-                                }
-                              >
-                                Delete
-                              </button>
-                            )}
-                        </div>
-                      </td>
+                      <th className="company-actions-heading">
+                        ACTIONS
+                      </th>
                     )}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+
+                <tbody>
+                  {filteredUsers.map(
+                    (user) => {
+                      const role =
+                        getRole(user);
+
+                      const groupName =
+                        getGroupName(
+                          user,
+                        );
+
+                      const isCurrentUser =
+                        user.id ===
+                        currentUser?.id;
+
+                      const isProtectedAdmin =
+                        currentUser?.role ===
+                          "Admin" &&
+                        role?.isAdmin ===
+                          true;
+
+                      return (
+                        <tr
+                          key={
+                            user.id
+                          }
+                        >
+
+                          {/* USER */}
+
+                          <td>
+                            <div className="company-user-cell">
+                              <div className="company-user-avatar">
+                                {user.name
+                                  ?.charAt(
+                                    0,
+                                  )
+                                  .toUpperCase() ||
+                                  "U"}
+                              </div>
+
+                              <div className="company-user-details">
+                                <div className="company-user-name">
+                                  {
+                                    user.name
+                                  }
+                                </div>
+
+                                <div className="company-user-email">
+                                  {
+                                    user.email
+                                  }
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* ROLE */}
+
+                          <td>
+                            <span className="company-role-badge company-role-badge-blue">
+                              {role?.name ||
+                                user
+                                  .role
+                                  ?.name ||
+                                "Unassigned"}
+                            </span>
+                          </td>
+
+                          {/* GROUP */}
+
+                          <td>
+                            {role?.isAdmin ? (
+                              <div className="company-admin-group-cell">
+                                <span className="company-admin-group-badge">
+                                  System Admin
+                                </span>
+                              </div>
+                            ) : (
+                              <span>
+                                {
+                                  groupName
+                                }
+                              </span>
+                            )}
+                          </td>
+
+                          {/* REPORTS TO */}
+
+                          <td>
+                            {user.manager ? (
+                              <div className="company-reports-to-cell">
+                                <div className="company-reports-to-name">
+                                  {
+                                    user
+                                      .manager
+                                      .name
+                                  }
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="company-reports-to-unassigned">
+                                Unassigned
+                              </span>
+                            )}
+                          </td>
+
+                          {/* STATUS */}
+
+                          <td>
+                            {user.active ? (
+                              <span className="company-status-badge company-status-active">
+                                <span className="company-status-dot" />
+
+                                <span>
+                                  Active
+                                </span>
+                              </span>
+                            ) : (
+                              <span className="company-status-badge company-status-inactive">
+                                <span className="company-status-dot" />
+
+                                <span>
+                                  Inactive
+                                </span>
+                              </span>
+                            )}
+                          </td>
+
+                          {/* ACTIONS */}
+
+                          {(canUpdateUsers ||
+                            canDeleteUsers) && (
+                            <td>
+                              <div className="company-user-actions">
+
+                                {/* VIEW */}
+
+                                <button
+                                  type="button"
+                                  className="company-icon-button company-icon-view"
+                                  onClick={() =>
+                                    router.push(
+                                      `/users/${user.id}`,
+                                    )
+                                  }
+                                  title="View"
+                                  aria-label={`View ${user.name}`}
+                                >
+                                  ◉
+                                </button>
+
+                                {/* EDIT */}
+
+                                {canUpdateUsers &&
+                                  !isProtectedAdmin && (
+                                    <button
+                                      type="button"
+                                      className="company-icon-button company-icon-edit"
+                                      onClick={() =>
+                                        router.push(
+                                          `/users/${user.id}/edit`,
+                                        )
+                                      }
+                                      title="Edit"
+                                      aria-label={`Edit ${user.name}`}
+                                    >
+                                      ✎
+                                    </button>
+                                  )}
+
+                                {/* STATUS */}
+
+                                {canUpdateUsers &&
+                                  !isCurrentUser &&
+                                  !isProtectedAdmin && (
+                                    <button
+                                      type="button"
+                                      className={`company-icon-button ${
+                                        user.active
+                                          ? "company-icon-status"
+                                          : "company-icon-status-inactive"
+                                      }`}
+                                      onClick={() =>
+                                        toggleUserStatus(
+                                          user,
+                                        )
+                                      }
+                                      title={
+                                        user.active
+                                          ? "Deactivate"
+                                          : "Activate"
+                                      }
+                                      aria-label={
+                                        user.active
+                                          ? `Deactivate ${user.name}`
+                                          : `Activate ${user.name}`
+                                      }
+                                    >
+                                      {user.active
+                                        ? "●"
+                                        : "○"}
+                                    </button>
+                                  )}
+
+                                {/* DELETE */}
+
+                                {canDeleteUsers &&
+                                  !isCurrentUser &&
+                                  !isProtectedAdmin && (
+                                    <button
+                                      type="button"
+                                      className="company-icon-button company-icon-delete"
+                                      onClick={() =>
+                                        deleteUser(
+                                          user,
+                                        )
+                                      }
+                                      title="Delete"
+                                      aria-label={`Delete ${user.name}`}
+                                    >
+                                      ×
+                                    </button>
+                                  )}
+
+                              </div>
+                            </td>
+                          )}
+
+                        </tr>
+                      );
+                    },
+                  )}
+                </tbody>
+
+              </table>
+            </div>
+          )}
+
+          {/* FOOTER / PAGINATION */}
+
+          {pagination.total > 0 && (
+            <div className="company-logs-pagination">
+
+              <div className="company-logs-pagination-info">
+                Showing{" "}
+                {showingFrom}{" "}
+                –{" "}
+                {showingTo}{" "}
+                of{" "}
+                {pagination.total}
+              </div>
+
+              <div className="company-logs-pagination-controls">
+
+                <button
+                  type="button"
+                  disabled={
+                    pagination.page <= 1 ||
+                    pageLoading
+                  }
+                  onClick={() =>
+                    changePage(
+                      pagination.page - 1,
+                    )
+                  }
+                >
+                  ←
+                </button>
+
+                <span>
+                  Page{" "}
+                  {pagination.page}{" "}
+                  of{" "}
+                  {pagination.totalPages || 1}
+                </span>
+
+                <button
+                  type="button"
+                  disabled={
+                    pagination.page >=
+                      pagination.totalPages ||
+                    pageLoading
+                  }
+                  onClick={() =>
+                    changePage(
+                      pagination.page + 1,
+                    )
+                  }
+                >
+                  →
+                </button>
+
+              </div>
+            </div>
+          )}
+
+        </div>
       </div>
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        title="Delete User?"
+        description={
+          <>
+            Are you sure you want to delete{" "}
+            <strong>
+              {deleteTarget?.name}
+            </strong>
+            ? This action cannot be undone.
+          </>
+        }
+        confirmLabel="Delete User"
+        onConfirm={
+          confirmDeleteUser
+        }
+        onCancel={() =>
+          setDeleteTarget(null)
+        }
+        loading={
+          deleteLoading
+        }
+      />
+
     </DashboardLayout>
   );
 }

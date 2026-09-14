@@ -129,16 +129,32 @@ export default function RoleForm({
       setLoading(true);
       setError("");
 
+          const rolesResponse =
+          await api.get<{
+            data: Role[];
+            pagination: {
+              page: number;
+              limit: number;
+              total: number;
+              totalPages: number;
+            };
+          }>("/roles", {
+            params: {
+              page: 1,
+              limit: 100,
+            },
+          });
+
+        setRoles(rolesResponse.data.data);
+
       const [
         groupsResponse,
-        rolesResponse,
       ] = await Promise.all([
-        api.get("/roles/groups"),
-        api.get("/roles"),
+        api.get("/roles/groups")
       ]);
 
       setGroups(groupsResponse.data);
-      setRoles(rolesResponse.data);
+  
     } catch (err: any) {
       setError(
         err?.response?.data?.message ||
@@ -434,233 +450,259 @@ export default function RoleForm({
   // LOADING
   // -----------------------------------
 
-  if (loading) {
+    if (loading) {
     return (
-      <div className="page-loading">
-        Loading role form...
+      <div className="company-page-loading">
+        <div className="company-loading-spinner" />
+        <span>Loading role form...</span>
       </div>
     );
   }
 
-  // -----------------------------------
-  // UI
-  // -----------------------------------
-
   return (
     <form
-      className="role-form"
+      className="company-role-form"
       onSubmit={handleSubmit}
     >
       {error && (
-        <div className="error-message">
+        <div className="company-users-error company-role-form-error">
           {error}
         </div>
       )}
 
-      {/* ----------------------------------- */}
-{/* ROLE SETTINGS */}
-{/* ----------------------------------- */}
+      {/* ROLE SETTINGS */}
+      <div className="company-role-form-section">
+        {/* <div className="company-role-section-heading">
+          <div>
+            <div className="company-panel-eyebrow">
+              ROLE SETTINGS
+            </div>
 
-<div className="role-settings-grid">
+            <h3>Role information</h3>
 
-  {/* ROLE NAME */}
+            <p>
+              Define the role and its position in
+              the organization.
+            </p>
+          </div>
+        </div> */}
 
-  <div className="form-group">
-    <label htmlFor="role-name">
-      Role name
-    </label>
+        <div className="company-role-settings-grid">
+          <div className="company-role-form-group">
+            <label htmlFor="role-name">
+              Role name
+            </label>
 
-    <input
-      id="role-name"
-      type="text"
-      value={form.name}
-      onChange={(event) =>
-        setForm((current) => ({
-          ...current,
-          name: event.target.value,
-        }))
-      }
-      placeholder="e.g. HR Manager"
-      disabled={saving}
-    />
-  </div>
-
-  {/* GROUP */}
-
-  <div className="form-group">
-    <label htmlFor="role-group">
-      Group
-    </label>
-
-    <select
-      id="role-group"
-      value={form.groupId ?? ""}
-      onChange={(event) => {
-        const value = event.target.value;
-
-        handleGroupChange(
-          value ? Number(value) : null,
-        );
-      }}
-      disabled={
-        saving ||
-        form.isAdmin
-      }
-    >
-      <option value="">
-        Select a group
-      </option>
-
-      {groups.map((group) => (
-        <option
-          key={group.id}
-          value={group.id}
-        >
-          {group.name}
-        </option>
-      ))}
-    </select>
-  </div>
-
-  {/* REPORTS TO */}
-
-  {!form.isAdmin && (
-    <div className="form-group">
-      <label htmlFor="role-reports-to">
-        Reports to
-      </label>
-
-      <select
-        id="role-reports-to"
-        value={
-          form.reportsToRoleId ?? ""
-        }
-        onChange={(event) => {
-          const value =
-            event.target.value;
-
-          setForm((current) => ({
-            ...current,
-            reportsToRoleId:
-              value
-                ? Number(value)
-                : null,
-          }));
-        }}
-        disabled={saving}
-      >
-        <option value="">
-          Select reporting role
-        </option>
-
-        {roles
-          .filter(
-            (item) =>
-              item.id !== role?.id,
-          )
-          .map((item) => (
-            <option
-              key={item.id}
-              value={item.id}
-            >
-              {item.name}
-            </option>
-          ))}
-      </select>
-
-      <small>
-        Users with this role must report
-        to a user with the selected role.
-      </small>
-    </div>
-  )}
-
-  {/* ACTIVE */}
-
-  {!form.isAdmin && (
-    <div className="role-status-box">
-      <label className="permission-option">
-        <input
-          type="checkbox"
-          checked={form.active}
-          onChange={(event) =>
-            setForm((current) => ({
-              ...current,
-              active:
-                event.target.checked,
-            }))
-          }
-          disabled={saving}
-        />
-
-        <span>Active</span>
-      </label>
-
-      <p className="form-help">
-        Inactive roles cannot be assigned
-        to new users.
-      </p>
-    </div>
-  )}
-
-</div>
-
-{/* ----------------------------------- */}
-{/* ADMINISTRATOR */}
-{/* ----------------------------------- */}
-
-<div className="role-admin-box">
-
-  <label className="permission-option">
-    <input
-      type="checkbox"
-      checked={form.isAdmin}
-      onChange={(event) =>
-        handleAdminChange(
-          event.target.checked,
-        )
-      }
-      disabled={saving}
-    />
-
-    <span>
-      Administrator role
-    </span>
-  </label>
-
-  <p className="form-help">
-    Administrator roles bypass normal
-    group permission assignment.
-  </p>
-
-</div>
-      {/* -------------------------------- */}
-      {/* PERMISSIONS */}
-      {/* -------------------------------- */}
-
-      {!form.isAdmin && (
-        <div className="role-permissions-editor">
-          <div className="role-section-label">
-            ROLE PERMISSIONS
+            <input
+              id="role-name"
+              type="text"
+              value={form.name}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  name: event.target.value,
+                }))
+              }
+              placeholder="e.g. HR Manager"
+              disabled={saving}
+            />
           </div>
 
-          <div className="role-permissions-description">
-            Select the permissions this role
-            should have. Click a permission
-            category to view its actions.
+          <div className="company-role-form-group">
+            <label htmlFor="role-group">
+              Group
+            </label>
+
+            <select
+              id="role-group"
+              value={form.groupId ?? ""}
+              onChange={(event) => {
+                const value = event.target.value;
+
+                handleGroupChange(
+                  value ? Number(value) : null,
+                );
+              }}
+              disabled={
+                saving ||
+                form.isAdmin
+              }
+            >
+              <option value="">
+                Select a group
+              </option>
+
+              {groups.map((group) => (
+                <option
+                  key={group.id}
+                  value={group.id}
+                >
+                  {group.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {!form.isAdmin && (
+            <div className="company-role-form-group">
+              <label htmlFor="role-reports-to">
+                Reports to
+              </label>
+
+              <select
+                id="role-reports-to"
+                value={
+                  form.reportsToRoleId ?? ""
+                }
+                onChange={(event) => {
+                  const value =
+                    event.target.value;
+
+                  setForm((current) => ({
+                    ...current,
+                    reportsToRoleId:
+                      value
+                        ? Number(value)
+                        : null,
+                  }));
+                }}
+                disabled={saving}
+              >
+                <option value="">
+                  Select reporting role
+                </option>
+
+                {roles
+                  .filter(
+                    (item) =>
+                      item.id !== role?.id,
+                  )
+                  .map((item) => (
+                    <option
+                      key={item.id}
+                      value={item.id}
+                    >
+                      {item.name}
+                    </option>
+                  ))}
+              </select>
+
+              <small>
+                Users with this role must report
+                to a user with the selected role.
+              </small>
+            </div>
+          )}
+
+          {!form.isAdmin && (
+            <div className="company-role-status-card">
+              <label className="company-role-check-option">
+                <input
+                  type="checkbox"
+                  checked={form.active}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      active:
+                        event.target.checked,
+                    }))
+                  }
+                  disabled={saving}
+                />
+
+                <span className="company-role-custom-check">
+                  {form.active ? "✓" : ""}
+                </span>
+
+                <span>
+                  <strong>Active</strong>
+                  <small>
+                    Inactive roles cannot be assigned
+                    to new users.
+                  </small>
+                </span>
+              </label>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ADMINISTRATOR */}
+      <div className="company-role-admin-card">
+        <label className="company-role-check-option">
+          <input
+            type="checkbox"
+            checked={form.isAdmin}
+            onChange={(event) =>
+              handleAdminChange(
+                event.target.checked,
+              )
+            }
+            disabled={saving}
+          />
+
+          <span className="company-role-custom-check">
+            {form.isAdmin ? "✓" : ""}
+          </span>
+
+          <span>
+            <strong>Administrator role</strong>
+
+            <small>
+              Administrator roles bypass normal
+              group permission assignment.
+            </small>
+          </span>
+        </label>
+      </div>
+
+      {/* PERMISSIONS */}
+      {!form.isAdmin && (
+        <div className="company-role-permissions">
+          <div className="company-role-section-heading">
+            <div>
+              <div className="company-panel-eyebrow">
+                ROLE PERMISSIONS
+              </div>
+
+              <h3>Permissions</h3>
+
+              <p>
+                Select the permissions this role
+                should have. Click a permission
+                category to view its actions.
+              </p>
+            </div>
+
+            <div className="company-role-permission-total">
+              {selectedPermissions.length} selected
+            </div>
           </div>
 
           {!form.groupId && (
-            <p className="role-no-permissions">
-              Select a group to see the
-              permissions available to this
-              role.
-            </p>
+            <div className="company-role-empty-permissions">
+              <div className="company-role-empty-icon">
+                +
+              </div>
+
+              <div>
+                <strong>Select a group first</strong>
+
+                <p>
+                  Choose a group above to see the
+                  permissions available to this
+                  role.
+                </p>
+              </div>
+            </div>
           )}
 
           {loadingPermissions && (
-            <div className="permissions-loading">
-              Loading permissions...
+            <div className="company-role-permissions-loading">
+              <div className="company-loading-spinner" />
+              <span>
+                Loading permissions...
+              </span>
             </div>
           )}
 
@@ -668,21 +710,28 @@ export default function RoleForm({
             form.groupId &&
             availablePermissions.length ===
               0 && (
-              <p className="role-no-permissions">
-                This group has no child
-                permissions available.
-              </p>
+              <div className="company-role-empty-permissions">
+                <div className="company-role-empty-icon">
+                  —
+                </div>
+
+                <div>
+                  <strong>
+                    No permissions available
+                  </strong>
+
+                  <p>
+                    This group has no child
+                    permissions available.
+                  </p>
+                </div>
+              </div>
             )}
 
           {!loadingPermissions &&
             availablePermissions.length > 0 && (
-              <div className="permissions-browser">
-
-                {/* -------------------------------- */}
-                {/* PARENT PERMISSIONS */}
-                {/* -------------------------------- */}
-
-                <div className="permission-parent-row">
+              <div className="company-permissions-browser">
+                <div className="company-permission-category-list">
                   {availablePermissions.map(
                     (groupPermission) => {
                       const isExpanded =
@@ -703,7 +752,7 @@ export default function RoleForm({
                             groupPermission.id
                           }
                           type="button"
-                          className={`permission-parent-card ${
+                          className={`company-permission-category ${
                             isExpanded
                               ? "is-expanded"
                               : ""
@@ -719,21 +768,37 @@ export default function RoleForm({
                           }
                           disabled={saving}
                         >
-                          <span className="permission-parent-card-left">
-                            <span className="permission-parent-icon">
+                          <span className="company-permission-category-main">
+                            <span className="company-permission-category-icon">
                               {isExpanded
                                 ? "−"
                                 : "+"}
                             </span>
 
-                            <span className="permission-parent-name">
-                              {
-                                groupPermission.name
-                              }
+                            <span>
+                              <strong>
+                                {
+                                  groupPermission.name
+                                }
+                              </strong>
+
+                              <small>
+                                {
+                                  groupPermission
+                                    .children
+                                    .length
+                                }{" "}
+                                permission
+                                {groupPermission
+                                  .children
+                                  .length !== 1
+                                  ? "s"
+                                  : ""}
+                              </small>
                             </span>
                           </span>
 
-                          <span className="permission-parent-meta">
+                          <span className="company-permission-count">
                             {selectedCount > 0
                               ? `${selectedCount}/${groupPermission.children.length}`
                               : groupPermission.children.length}
@@ -744,13 +809,9 @@ export default function RoleForm({
                   )}
                 </div>
 
-                {/* -------------------------------- */}
-                {/* CHILD PERMISSIONS */}
-                {/* -------------------------------- */}
-
                 {expandedPermissionGroup !==
                   null && (
-                  <div className="permission-children-panel">
+                  <div className="company-permission-children-panel">
                     {availablePermissions
                       .filter(
                         (groupPermission) =>
@@ -763,33 +824,36 @@ export default function RoleForm({
                             key={
                               groupPermission.id
                             }
-                            className="permission-children-content"
+                            className="company-permission-children-content"
                           >
-                            <div className="permission-children-header">
+                            <div className="company-permission-children-header">
                               <div>
-                                <div className="permission-children-title">
+                                <div className="company-permission-children-title">
                                   {
                                     groupPermission.name
                                   }
                                 </div>
 
-                                <div className="permission-children-subtitle">
+                                <div className="company-permission-children-subtitle">
                                   Select the actions
                                   available under
-                                  this permission.
+                                  this permission
+                                  category.
                                 </div>
                               </div>
 
-                              <div className="permission-children-count">
+                              <div className="company-permission-selected-count">
                                 {
-                                  groupPermission.children.filter(
-                                    (
-                                      permission,
-                                    ) =>
-                                      selectedPermissions.includes(
-                                        permission.id,
-                                      ),
-                                  ).length
+                                  groupPermission
+                                    .children
+                                    .filter(
+                                      (
+                                        permission,
+                                      ) =>
+                                        selectedPermissions.includes(
+                                          permission.id,
+                                        ),
+                                    ).length
                                 }{" "}
                                 selected
                               </div>
@@ -798,11 +862,11 @@ export default function RoleForm({
                             {groupPermission
                               .children
                               .length === 0 ? (
-                              <div className="role-no-permissions">
+                              <div className="company-role-empty-child">
                                 No child permissions.
                               </div>
                             ) : (
-                              <div className="permission-child-row">
+                              <div className="company-permission-child-grid">
                                 {groupPermission.children.map(
                                   (
                                     permission,
@@ -817,7 +881,7 @@ export default function RoleForm({
                                         key={
                                           permission.id
                                         }
-                                        className={`permission-child-card ${
+                                        className={`company-permission-child ${
                                           checked
                                             ? "is-selected"
                                             : ""
@@ -838,13 +902,13 @@ export default function RoleForm({
                                           }
                                         />
 
-                                        <span className="permission-child-check">
+                                        <span className="company-permission-child-check">
                                           {checked
                                             ? "✓"
                                             : ""}
                                         </span>
 
-                                        <span className="permission-child-name">
+                                        <span className="company-permission-child-name">
                                           {
                                             permission.name
                                           }
@@ -865,17 +929,12 @@ export default function RoleForm({
         </div>
       )}
 
-      {/* -------------------------------- */}
       {/* ACTIONS */}
-      {/* -------------------------------- */}
-
-      <div className="role-form-actions">
+      <div className="company-role-form-actions">
         <button
           type="button"
-          className="button button-secondary"
-          onClick={() =>
-            window.history.back()
-          }
+          className="company-secondary-button"
+          onClick={() => window.history.back()}
           disabled={saving}
         >
           Cancel
@@ -883,7 +942,7 @@ export default function RoleForm({
 
         <button
           type="submit"
-          className="button button-primary"
+          className="company-primary-button"
           disabled={saving}
         >
           {saving

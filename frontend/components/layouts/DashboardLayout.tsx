@@ -1,7 +1,9 @@
 "use client";
 
 import { ReactNode } from "react";
+
 import Sidebar from "./Sidebar";
+import Header from "./Header";
 
 export default function DashboardLayout({
   children,
@@ -12,9 +14,13 @@ export default function DashboardLayout({
     <div className="app-shell">
       <Sidebar />
 
-      <main className="main-content">
-        {children}
-      </main>
+      <div className="app-main">
+        <Header />
+
+        <main className="main-content">
+          {children}
+        </main>
+      </div>
     </div>
   );
 }

@@ -1,9 +1,11 @@
 import {
+  IsBoolean,
   IsInt,
   IsOptional,
 } from "class-validator";
 
 import { PartialType } from "@nestjs/mapped-types";
+
 import { CreateUserDto } from "./create-user.dto";
 
 export class UpdateUserDto extends PartialType(
@@ -12,4 +14,8 @@ export class UpdateUserDto extends PartialType(
   @IsOptional()
   @IsInt()
   managerId?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
 }

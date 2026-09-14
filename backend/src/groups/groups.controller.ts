@@ -7,7 +7,9 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Req,
   UseGuards,
+  Query
 } from "@nestjs/common";
 
 import { GroupsService } from "./groups.service";
@@ -33,10 +35,16 @@ export class GroupsController {
   // -----------------------------------
 
   @Get()
-  @Permissions("roles.manage")
-  findAll() {
-    return this.groupsService.findAll();
-  }
+@Permissions("roles.manage")
+findAll(
+  @Query("page") page?: string,
+  @Query("limit") limit?: string,
+) {
+  return this.groupsService.findAll(
+    page ? Number(page) : 1,
+    limit ? Number(limit) : 10,
+  );
+}
 
   // -----------------------------------
   // GET ONE GROUP
@@ -50,7 +58,7 @@ export class GroupsController {
   ) {
     return this.groupsService.findOne(id);
   }
-   
+
   // -----------------------------------
   // CREATE GROUP
   // -----------------------------------
@@ -59,8 +67,13 @@ export class GroupsController {
   @Permissions("roles.manage")
   create(
     @Body() dto: CreateGroupDto,
+    @Req() req: any,
   ) {
-    return this.groupsService.create(dto);
+    return this.groupsService.create(
+      dto,
+      Number(req.user.id),
+      req,
+    );
   }
 
   // -----------------------------------
@@ -74,10 +87,14 @@ export class GroupsController {
     id: number,
 
     @Body() dto: CreateGroupDto,
+
+    @Req() req: any,
   ) {
     return this.groupsService.update(
       id,
       dto,
+      Number(req.user.id),
+      req,
     );
   }
 
@@ -90,9 +107,13 @@ export class GroupsController {
   toggleStatus(
     @Param("id", ParseIntPipe)
     id: number,
+
+    @Req() req: any,
   ) {
     return this.groupsService.toggleStatus(
       id,
+      Number(req.user.id),
+      req,
     );
   }
 
@@ -105,7 +126,13 @@ export class GroupsController {
   remove(
     @Param("id", ParseIntPipe)
     id: number,
+
+    @Req() req: any,
   ) {
-    return this.groupsService.remove(id);
+    return this.groupsService.remove(
+      id,
+      Number(req.user.id),
+      req,
+    );
   }
 }

@@ -7,11 +7,21 @@ import { api } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 
+type Group = {
+  id: number;
+  name: string;
+  active: boolean;
+};
+
 type Role = {
   id: number;
   name: string;
   isAdmin: boolean;
   active: boolean;
+  groupId: number | null;
+
+  group?: Group | null;
+
   reportsToRoleId: number | null;
 
   reportsToRole?: {
@@ -111,7 +121,7 @@ export default function CreateUserPage() {
     useState("");
 
   // -----------------------------------
-  // CHECK AUTH
+  // AUTH CHECK
   // -----------------------------------
 
   useEffect(() => {
@@ -148,63 +158,87 @@ export default function CreateUserPage() {
   // LOAD ROLES
   // -----------------------------------
 
-  useEffect(() => {
-    if (!authorized) {
-      return;
-    }
+  // -----------------------------------
+// LOAD ROLES
+// -----------------------------------
 
-    async function loadRoles() {
-      setLoadingRoles(true);
-      setError("");
+useEffect(() => {
+  if (!authorized) {
+    return;
+  }
 
-      try {
-        const response =
-          await api.get("/roles");
+  async function loadRoles() {
+    setLoadingRoles(true);
+    setError("");
 
-        /*
-         * The backend is the source of truth
-         * for administrator status.
-         *
-         * Do NOT use role.level here.
-         *
-         * Admin roles are excluded because the
-         * current UsersService does not allow
-         * administrators to create another
-         * administrator.
-         */
+    try {
+      const response =
+        await api.get<{
+          data: Role[];
+          pagination: {
+            page: number;
+            limit: number;
+            total: number;
+            totalPages: number;
+          };
+        }>("/roles", {
+          params: {
+            page: 1,
+            limit: 100,
+          },
+        });
 
-        const availableRoles =
-          response.data
-            .filter(
-              (role: Role) =>
-                !role.isAdmin &&
-                role.active,
-            )
-            .sort(
-              (a: Role, b: Role) =>
-                a.name.localeCompare(
-                  b.name,
-                ),
-            );
+      /*
+       * /roles is now paginated.
+       *
+       * This page does not display the Roles
+       * list itself. It only needs Roles as
+       * lookup data for the role selector.
+       *
+       * Admin roles are excluded because
+       * the backend does not allow the current
+       * user to create another Admin.
+       *
+       * Backend remains the final authority.
+       */
 
-        setRoles(availableRoles);
-      } catch (err: any) {
-        console.error(
-          "Unable to load roles:",
-          err,
-        );
+      const availableRoles =
+        response.data.data
+          .filter(
+            (role) =>
+              !role.isAdmin &&
+              role.active,
+          )
+          .sort(
+            (a, b) =>
+              a.name.localeCompare(
+                b.name,
+              ),
+          );
 
-        setError(
-          err?.response?.data?.message ||
-            "Unable to load available roles.",
-        );
-      } finally {
-        setLoadingRoles(false);
+      setRoles(availableRoles);
+    } catch (err: any) {
+      console.error(
+        "Unable to load roles:",
+        err,
+      );
+
+      if (err?.response?.status === 401) {
+        router.replace("/login");
+        return;
       }
-    }
 
-    loadRoles();
-  }, [authorized]);
+      setError(
+        err?.response?.data?.message ||
+          "Unable to load available roles.",
+      );
+    } finally {
+      setLoadingRoles(false);
+    }
+  }
+
+  loadRoles();
+}, [authorized, router]);
 
   // -----------------------------------
   // HANDLE ROLE CHANGE
@@ -249,7 +283,7 @@ export default function CreateUserPage() {
 
       try {
         const response =
-          await api.get(
+          await api.get<Manager[]>(
             `/users/possible-managers-for-role/${roleId}`,
           );
 
@@ -288,19 +322,30 @@ export default function CreateUserPage() {
     setError("");
 
     // -----------------------------------
-    // BASIC VALIDATION
+    // VALIDATION
     // -----------------------------------
 
     if (!name.trim()) {
       setError(
-        "Name is required.",
+        "Full name is required.",
       );
       return;
     }
 
     if (!email.trim()) {
       setError(
-        "Email is required.",
+        "Email address is required.",
+      );
+      return;
+    }
+
+    if (
+      !/^\S+@\S+\.\S+$/.test(
+        email.trim(),
+      )
+    ) {
+      setError(
+        "Enter a valid email address.",
       );
       return;
     }
@@ -308,6 +353,13 @@ export default function CreateUserPage() {
     if (!password) {
       setError(
         "Password is required.",
+      );
+      return;
+    }
+
+    if (password.length < 6) {
+      setError(
+        "Password must be at least 6 characters.",
       );
       return;
     }
@@ -327,41 +379,23 @@ export default function CreateUserPage() {
     }
 
     // -----------------------------------
-    // ADMIN ROLE
+    // HIERARCHY
     // -----------------------------------
 
     /*
      * Admin users never have a manager.
-     *
-     * Currently admin roles are not exposed
-     * in the create form, but keep this logic
-     * here so the request remains consistent
-     * with the backend.
      */
 
     if (selectedRole.isAdmin) {
       setManagerId("");
     }
 
-    // -----------------------------------
-    // NORMAL ROLE
-    // -----------------------------------
-
     /*
-     * A normal role must have a reporting
-     * role defined.
+     * Normal roles that have a reporting role:
      *
-     * However, the backend currently allows
-     * managerId = null when no matching manager
-     * exists yet.
-     *
-     * Therefore:
-     *
-     * - If managers exist -> user should select one.
-     * - If no managers exist -> allow creation
-     *   without a manager.
-     *
-     * The backend remains the final authority.
+     * - managers exist -> manager is required
+     * - no managers exist -> allow temporary
+     *   unassigned creation
      */
 
     if (
@@ -398,7 +432,7 @@ export default function CreateUserPage() {
               : null,
       });
 
-      router.push("/users");
+      router.replace("/users?success=created");
     } catch (err: any) {
       const message =
         err?.response?.data?.message;
@@ -437,349 +471,384 @@ export default function CreateUserPage() {
   }
 
   // -----------------------------------
+  // SELECTED GROUP
+  // -----------------------------------
+
+  const selectedGroupName =
+    selectedRole?.group?.name ||
+    "Unassigned";
+
+  // -----------------------------------
   // UI
   // -----------------------------------
 
   return (
     <DashboardLayout>
-      <div className="page-header">
-        <div>
-          <div className="page-eyebrow">
-            USER MANAGEMENT
-          </div>
+      <div className="company-users-page">
+        {/* -------------------------------- */}
+        {/* PAGE HEADER */}
+        {/* -------------------------------- */}
 
-          <h1>Create user</h1>
-
-          <p>
-            Add a new user to the
-            application.
-          </p>
-        </div>
-
-        <button
-          className="button button-secondary"
-          onClick={() =>
-            router.push("/users")
-          }
-          type="button"
-        >
-          ← Back to users
-        </button>
-      </div>
-
-      <div className="form-card">
-        <div className="form-card-header">
-          <div className="form-card-icon">
-            +
-          </div>
-
+        <div className="company-page-header">
           <div>
-            <h2>User information</h2>
+            <div className="company-page-eyebrow">
+              USER MANAGEMENT
+            </div>
+
+            <h1>Add User</h1>
 
             <p>
-              Enter the account details
-              and hierarchy information
-              for the new user.
+              Create a new user account.
             </p>
           </div>
-        </div>
 
-        <form
-          onSubmit={createUser}
-          className="admin-form"
-        >
-          {error && (
-            <div className="alert-error">
-              {error}
-            </div>
-          )}
-
-          {/* -------------------------------- */}
-          {/* NAME + EMAIL */}
-          {/* -------------------------------- */}
-
-          <div className="form-row">
-            <div className="form-group">
-              <label htmlFor="name">
-                Full name
-              </label>
-
-              <input
-                id="name"
-                type="text"
-                placeholder="e.g. Ahmed Khan"
-                value={name}
-                onChange={(e) =>
-                  setName(
-                    e.target.value,
-                  )
-                }
-                required
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="email">
-                Email address
-              </label>
-
-              <input
-                id="email"
-                type="email"
-                placeholder="e.g. ahmed@company.com"
-                value={email}
-                onChange={(e) =>
-                  setEmail(
-                    e.target.value,
-                  )
-                }
-                required
-              />
-            </div>
-          </div>
-
-          {/* -------------------------------- */}
-          {/* PASSWORD + ROLE */}
-          {/* -------------------------------- */}
-
-          <div className="form-row">
-            <div className="form-group">
-              <label htmlFor="password">
-                Password
-              </label>
-
-              <input
-                id="password"
-                type="password"
-                placeholder="Create a password"
-                value={password}
-                onChange={(e) =>
-                  setPassword(
-                    e.target.value,
-                  )
-                }
-                required
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="role">
-                Role
-              </label>
-
-              {loadingRoles ? (
-                <div className="form-input">
-                  Loading roles...
-                </div>
-              ) : (
-                <select
-                  id="role"
-                  className="form-input"
-                  value={roleId}
-                  onChange={(e) =>
-                    handleRoleChange(
-                      e.target.value,
-                    )
-                  }
-                  required
-                >
-                  <option value="">
-                    Select a role
-                  </option>
-
-                  {roles.map(
-                    (role) => (
-                      <option
-                        key={role.id}
-                        value={role.id}
-                      >
-                        {role.name}
-                      </option>
-                    ),
-                  )}
-                </select>
-              )}
-
-              <div className="field-help">
-                Select the user's
-                position in the company
-                hierarchy.
-              </div>
-            </div>
-          </div>
-
-          {/* -------------------------------- */}
-          {/* REPORTING ROLE INFO */}
-          {/* -------------------------------- */}
-
-          {selectedRole &&
-            !selectedRole.isAdmin && (
-              <div
-                style={{
-                  marginTop: "4px",
-                  marginBottom: "20px",
-                  padding:
-                    "12px 14px",
-                  borderRadius: "8px",
-                  background:
-                    "rgba(255,255,255,0.04)",
-                  fontSize: "13px",
-                }}
-              >
-                <strong>
-                  Role hierarchy
-                </strong>
-
-                <div
-                  style={{
-                    marginTop: "6px",
-                  }}
-                >
-                  {selectedRole.reportsToRole ? (
-                    <>
-                      This user will
-                      report to a{" "}
-                      <strong>
-                        {
-                          selectedRole
-                            .reportsToRole
-                            .name
-                        }
-                      </strong>
-                      .
-                    </>
-                  ) : (
-                    <>
-                      This role does
-                      not currently
-                      have a reporting
-                      role configured.
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-
-          {/* -------------------------------- */}
-          {/* REPORTS TO */}
-          {/* -------------------------------- */}
-
-          {selectedRole &&
-            !selectedRole.isAdmin &&
-            selectedRole
-              .reportsToRoleId !==
-              null && (
-              <div className="form-group">
-                <label htmlFor="manager">
-                  Reports To
-                </label>
-
-                {loadingManagers ? (
-                  <div className="form-input">
-                    Loading managers...
-                  </div>
-                ) : possibleManagers.length ===
-                  0 ? (
-                  <div className="field-help">
-                    No active users currently
-                    exist with the required
-                    reporting role.
-                    <br />
-                    The user can be created
-                    without a manager and
-                    assigned one later.
-                  </div>
-                ) : (
-                  <select
-                    id="manager"
-                    className="form-input"
-                    value={managerId}
-                    onChange={(e) =>
-                      setManagerId(
-                        e.target.value,
-                      )
-                    }
-                  >
-                    <option value="">
-                      Select manager
-                    </option>
-
-                    {possibleManagers.map(
-                      (manager) => (
-                        <option
-                          key={manager.id}
-                          value={
-                            manager.id
-                          }
-                        >
-                          {manager.name}{" "}
-                          —{" "}
-                          {
-                            manager.role
-                              ?.name
-                          }
-                        </option>
-                      ),
-                    )}
-                  </select>
-                )}
-
-                <div className="field-help">
-                  Only active users with
-                  the role required by{" "}
-                  <strong>
-                    {
-                      selectedRole
-                        .name
-                    }
-                  </strong>{" "}
-                  are shown.
-                </div>
-              </div>
-            )}
-
-          {/* -------------------------------- */}
-          {/* ADMIN INFO */}
-          {/* -------------------------------- */}
-
-          {selectedRole?.isAdmin && (
-            <div className="field-help">
-              Administrator users do not
-              report to another user.
-            </div>
-          )}
-
-          {/* -------------------------------- */}
-          {/* ACTIONS */}
-          {/* -------------------------------- */}
-
-          <div className="form-actions">
+          <div className="company-page-actions">
             <button
               type="button"
-              className="button button-secondary"
+              className="company-secondary-button"
               onClick={() =>
                 router.push("/users")
               }
               disabled={loading}
             >
-              Cancel
-            </button>
-
-            <button
-              type="submit"
-              className="button button-primary"
-              disabled={
-                loading ||
-                loadingRoles ||
-                loadingManagers
-              }
-            >
-              {loading
-                ? "Creating..."
-                : "Create user"}
+              ← Back
             </button>
           </div>
-        </form>
+        </div>
+
+        {/* -------------------------------- */}
+        {/* FORM PANEL */}
+        {/* -------------------------------- */}
+
+        <div className="company-user-view-panel">
+          <div className="company-user-information">
+            <h3>User Information</h3>
+
+            <form
+              onSubmit={createUser}
+              className="company-create-user-form"
+            >
+              {error && (
+                <div className="company-users-error">
+                  {error}
+                </div>
+              )}
+
+              {/* -------------------------------- */}
+              {/* NAME + EMAIL */}
+              {/* -------------------------------- */}
+
+              <div className="company-create-form-grid">
+                <div className="company-create-form-group">
+                  <label htmlFor="name">
+                    Full Name
+                  </label>
+
+                  <input
+                    id="name"
+                    type="text"
+                    placeholder="e.g. Ahmed Khan"
+                    value={name}
+                    onChange={(e) =>
+                      setName(
+                        e.target.value,
+                      )
+                    }
+                    disabled={loading}
+                    required
+                  />
+                </div>
+
+                <div className="company-create-form-group">
+                  <label htmlFor="email">
+                    Email Address
+                  </label>
+
+                  <input
+                    id="email"
+                    type="email"
+                    placeholder="e.g. ahmed@company.com"
+                    value={email}
+                    onChange={(e) =>
+                      setEmail(
+                        e.target.value,
+                      )
+                    }
+                    disabled={loading}
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* -------------------------------- */}
+              {/* PASSWORD + ROLE */}
+              {/* -------------------------------- */}
+
+              <div className="company-create-form-grid">
+                <div className="company-create-form-group">
+                  <label htmlFor="password">
+                    Password
+                  </label>
+
+                  <input
+                    id="password"
+                    type="password"
+                    placeholder="Create a password"
+                    value={password}
+                    onChange={(e) =>
+                      setPassword(
+                        e.target.value,
+                      )
+                    }
+                    disabled={loading}
+                    required
+                  />
+
+                  <span className="company-create-form-help">
+                    Minimum 6 characters.
+                  </span>
+                </div>
+
+                <div className="company-create-form-group">
+                  <label htmlFor="role">
+                    Role
+                  </label>
+
+                  {loadingRoles ? (
+                    <div className="company-create-form-readonly">
+                      Loading roles...
+                    </div>
+                  ) : (
+                    <select
+                      id="role"
+                      value={roleId}
+                      onChange={(e) =>
+                        handleRoleChange(
+                          e.target.value,
+                        )
+                      }
+                      disabled={loading}
+                      required
+                    >
+                      <option value="">
+                        Select a role
+                      </option>
+
+                      {roles.map(
+                        (role) => (
+                          <option
+                            key={role.id}
+                            value={role.id}
+                          >
+                            {role.name}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  )}
+
+                  <span className="company-create-form-help">
+                    Select the user's position
+                    in the company hierarchy.
+                  </span>
+                </div>
+              </div>
+
+              {/* -------------------------------- */}
+              {/* GROUP */}
+              {/* -------------------------------- */}
+
+              <div className="company-create-form-grid">
+                <div className="company-create-form-group">
+                  <label htmlFor="group">
+                    Group
+                  </label>
+
+                  <div
+                    id="group"
+                    className="company-create-form-readonly company-create-group-field"
+                  >
+                    <span>
+                      {selectedGroupName}
+                    </span>
+
+                    {selectedRole && (
+                      <span className="company-create-group-badge">
+                        From selected role
+                      </span>
+                    )}
+                  </div>
+
+                  <span className="company-create-form-help">
+                    Group is determined by the
+                    selected role.
+                  </span>
+                </div>
+
+                <div className="company-create-form-group">
+                  <label>
+                    Role Hierarchy
+                  </label>
+
+                  <div className="company-create-form-readonly company-create-hierarchy-field">
+                    {!selectedRole ? (
+                      <span className="company-create-muted">
+                        Select a role to see its
+                        hierarchy.
+                      </span>
+                    ) : selectedRole
+                        .reportsToRole ? (
+                      <span>
+                        Reports to{" "}
+                        <strong>
+                          {
+                            selectedRole
+                              .reportsToRole
+                              .name
+                          }
+                        </strong>
+                      </span>
+                    ) : (
+                      <span>
+                        No reporting role
+                        configured.
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* -------------------------------- */}
+              {/* REPORTS TO */}
+              {/* -------------------------------- */}
+
+              {selectedRole &&
+                !selectedRole.isAdmin &&
+                selectedRole
+                  .reportsToRoleId !==
+                  null && (
+                  <div className="company-create-form-group company-create-full-width">
+                    <label htmlFor="manager">
+                      Reports To
+                    </label>
+
+                    {loadingManagers ? (
+                      <div className="company-create-form-readonly">
+                        Loading managers...
+                      </div>
+                    ) : possibleManagers.length ===
+                      0 ? (
+                      <div className="company-create-info-box">
+                        <strong>
+                          No manager currently
+                          available.
+                        </strong>
+
+                        <span>
+                          No active users currently
+                          exist with the required
+                          reporting role. The user
+                          can be created without a
+                          manager and assigned one
+                          later.
+                        </span>
+                      </div>
+                    ) : (
+                      <select
+                        id="manager"
+                        value={managerId}
+                        onChange={(e) =>
+                          setManagerId(
+                            e.target.value,
+                          )
+                        }
+                        disabled={loading}
+                      >
+                        <option value="">
+                          Select manager
+                        </option>
+
+                        {possibleManagers.map(
+                          (manager) => (
+                            <option
+                              key={manager.id}
+                              value={
+                                manager.id
+                              }
+                            >
+                              {manager.name}{" "}
+                              —{" "}
+                              {
+                                manager.role
+                                  ?.name
+                              }
+                            </option>
+                          ),
+                        )}
+                      </select>
+                    )}
+
+                    <span className="company-create-form-help">
+                      Only active users with the
+                      role required by{" "}
+                      <strong>
+                        {selectedRole.name}
+                      </strong>{" "}
+                      are shown.
+                    </span>
+                  </div>
+                )}
+
+              {/* -------------------------------- */}
+              {/* ADMIN INFORMATION */}
+              {/* -------------------------------- */}
+
+              {selectedRole?.isAdmin && (
+                <div className="company-create-info-box">
+                  <strong>
+                    Administrator role
+                  </strong>
+
+                  <span>
+                    Administrator users do not
+                    report to another user.
+                  </span>
+                </div>
+              )}
+
+              {/* -------------------------------- */}
+              {/* ACTIONS */}
+              {/* -------------------------------- */}
+
+              <div className="company-create-form-actions">
+                <button
+                  type="button"
+                  className="company-secondary-button"
+                  onClick={() =>
+                    router.push("/users")
+                  }
+                  disabled={loading}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="company-primary-button"
+                  disabled={
+                    loading ||
+                    loadingRoles ||
+                    loadingManagers
+                  }
+                >
+                  {loading
+                    ? "Creating..."
+                    : "Create User"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       </div>
     </DashboardLayout>
   );

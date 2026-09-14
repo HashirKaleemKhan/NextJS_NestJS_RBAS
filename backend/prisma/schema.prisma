@@ -8,10 +8,11 @@ datasource db {
 }
 
 model User {
-  id       Int    @id @default(autoincrement())
+  id       Int     @id @default(autoincrement())
   name     String
-  email    String @unique
+  email    String  @unique
   password String
+  active   Boolean @default(true)
 
   roleId Int
   role   Role @relation(fields: [roleId], references: [id])
@@ -22,6 +23,8 @@ model User {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  auditLogs AuditLog[] @relation("AuditLogActor")
 }
 
 model Group {
@@ -37,16 +40,16 @@ model Group {
 }
 
 model Role {
-  id       Int     @id @default(autoincrement())
-  name     String  @unique
-  isAdmin  Boolean @default(false)
-  active   Boolean @default(true)
+  id      Int     @id @default(autoincrement())
+  name    String  @unique
+  isAdmin Boolean @default(false)
+  active  Boolean @default(true)
 
   groupId Int?
   group   Group? @relation(fields: [groupId], references: [id])
 
-  reportsToRoleId Int?
-  reportsToRole   Role?  @relation("RoleHierarchy", fields: [reportsToRoleId], references: [id], onDelete: SetNull)
+  reportsToRoleId  Int?
+  reportsToRole    Role?  @relation("RoleHierarchy", fields: [reportsToRoleId], references: [id], onDelete: SetNull)
   subordinateRoles Role[] @relation("RoleHierarchy")
 
   users       User[]
@@ -89,4 +92,33 @@ model RolePermission {
   permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
   @@id([roleId, permissionId])
+}
+
+model AuditLog {
+  id Int @id @default(autoincrement())
+
+  action   String
+  entity   String
+  entityId Int?
+
+  actorId    Int?
+  actorName  String?
+  actorEmail String?
+
+  description String
+
+  oldValues Json?
+  newValues Json?
+
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  actor User? @relation("AuditLogActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([actorId])
+  @@index([entity, entityId])
+  @@index([action])
 }

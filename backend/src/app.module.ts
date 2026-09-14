@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { ConfigModule } from '@nestjs/config';
 import { RolesModule } from './roles/roles.module';
 import { GroupsModule } from './groups/groups.module';
+import { AuditLogsModule } from "./audit-logs/audit-logs.module";
 
 
 @Module({
@@ -19,6 +20,7 @@ import { GroupsModule } from './groups/groups.module';
     AuthModule,
     RolesModule,
     GroupsModule,
+    AuditLogsModule,
   ],
 })
 export class AppModule {}

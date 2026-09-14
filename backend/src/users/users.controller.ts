@@ -9,12 +9,14 @@ import {
   Patch,
   Req,
   UseGuards,
+  Query,
 } from "@nestjs/common";
 
 import { UsersService } from "./users.service";
 
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
+import { UpdateUserStatusDto } from "./dto/update-user-status.dto";
 
 import { JwtAuthGuard } from "../auth/guards/jwt-auth/jwt-auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions/permissions.guard";
@@ -28,7 +30,7 @@ export class UsersController {
 
   // -----------------------------------
   // CREATE USER
-  // ADMIN ONLY
+  // PERMISSIONS: users.create
   // -----------------------------------
 
   @Post()
@@ -44,6 +46,7 @@ create(
   return this.usersService.create(
     createUserDto,
     Number(req.user.id),
+    req,
   );
 }
 
@@ -52,16 +55,22 @@ create(
   // -----------------------------------
 
   @Get()
-  @UseGuards(
-    JwtAuthGuard,
-    PermissionsGuard,
-  )
-  @Permissions("users.read")
-  findAll(@Req() req: any) {
-    return this.usersService.findAll(
-      Number(req.user.id),
-    );
-  }
+@UseGuards(
+  JwtAuthGuard,
+  PermissionsGuard,
+)
+@Permissions("users.read")
+findAll(
+  @Req() req: any,
+  @Query("page") page?: string,
+  @Query("limit") limit?: string,
+) {
+  return this.usersService.findAll(
+    Number(req.user.id),
+    page ? Number(page) : 1,
+    limit ? Number(limit) : 10,
+  );
+}
 
 // -----------------------------------
 // ORGANIZATION HIERARCHY
@@ -81,7 +90,10 @@ getHierarchy(@Req() req: any) {
 
 @Get("possible-managers-for-role/:roleId")
 @UseGuards(JwtAuthGuard, PermissionsGuard)
-@Permissions("users.create")
+@Permissions(
+  "users.create",
+  "users.update",
+)
 getPossibleManagersForRole(
   @Param("roleId", ParseIntPipe) roleId: number,
   @Req() req: any,
@@ -167,6 +179,36 @@ findOne(
       id,
       updateUserDto,
       Number(req.user.id),
+      req,
+    );
+  }
+
+    // -----------------------------------
+  // UPDATE USER STATUS
+  // -----------------------------------
+
+  @Patch(":id/status")
+  @UseGuards(
+    JwtAuthGuard,
+    PermissionsGuard,
+  )
+  @Permissions("users.update")
+  updateStatus(
+    @Param(
+      "id",
+      ParseIntPipe,
+    )
+    id: number,
+
+    @Body() updateUserStatusDto: UpdateUserStatusDto,
+
+    @Req() req: any,
+  ) {
+    return this.usersService.updateStatus(
+      id,
+      updateUserStatusDto.active,
+      Number(req.user.id),
+      req,
     );
   }
 
@@ -192,6 +234,7 @@ findOne(
     return this.usersService.remove(
       id,
       Number(req.user.id),
+      req,
     );
   }
 

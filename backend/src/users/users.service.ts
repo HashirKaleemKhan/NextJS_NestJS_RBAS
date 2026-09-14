@@ -8,219 +8,261 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
+import { AuditLogsService } from "../audit-logs/audit-logs.service";
+import { AuditAction } from "../audit-logs/audit-actions";
 
 import * as bcrypt from "bcrypt";
 
 @Injectable()
 export class UsersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+  private prisma: PrismaService,
+  private auditLogsService: AuditLogsService,
+) {}
 
   // -----------------------------------
   // CREATE USER
   // -----------------------------------
 
   async create(
-    createUserDto: CreateUserDto,
-    currentUserId: number,
-  ) {
-    // -----------------------------------
-    // VERIFY CURRENT USER
-    // -----------------------------------
-
-    const currentUser =
-      await this.prisma.user.findUnique({
-        where: {
-          id: currentUserId,
-        },
-
-        include: {
-          role: true,
-        },
-      });
-
-    if (!currentUser) {
-      throw new NotFoundException(
-        "Current user not found",
-      );
-    }
-
-    // -----------------------------------
-    // ADMIN ONLY
-    // -----------------------------------
-
-    if (!currentUser.role.isAdmin) {
-      throw new ForbiddenException(
-        "Only administrators can create users",
-      );
-    }
-
-    // -----------------------------------
-    // CHECK EMAIL
-    // -----------------------------------
-
-    const existingUser =
-      await this.prisma.user.findUnique({
-        where: {
-          email: createUserDto.email,
-        },
-      });
-
-    if (existingUser) {
-      throw new ConflictException(
-        "Email already exists",
-      );
-    }
-
-    // -----------------------------------
-    // GET SELECTED ROLE
-    // -----------------------------------
-
-    const role =
-      await this.prisma.role.findUnique({
-        where: {
-          id: createUserDto.roleId,
-        },
-
-        include: {
-          reportsToRole: true,
-        },
-      });
-
-    if (!role) {
-      throw new NotFoundException(
-        "Selected role not found",
-      );
-    }
-
-    // -----------------------------------
-// VALIDATE MANAGER
-// -----------------------------------
-
-let managerId:
-  | number
-  | null
-  | undefined =
-  createUserDto.managerId;
-
-// -----------------------------------
-// ADMINISTRATOR
-// -----------------------------------
-
-if (role.isAdmin) {
-  /*
-   * Administrator users never have
-   * a manager.
-   */
-  managerId = null;
-}
-
-// -----------------------------------
-// TOP-LEVEL NON-ADMIN ROLE
-// -----------------------------------
-
-else if (
-  role.reportsToRoleId === null
+  createUserDto: CreateUserDto,
+  currentUserId: number,
+  req: any,
 ) {
-  /*
-   * Example: CEO
-   *
-   * This role does not report to another
-   * role, therefore users with this role
-   * do not need a manager.
-   */
-  managerId = null;
-}
+  // -----------------------------------
+  // VERIFY CURRENT USER
+  // -----------------------------------
 
-// -----------------------------------
-// ROLE HAS A REPORTING ROLE
-// -----------------------------------
+  const currentUser =
+    await this.prisma.user.findUnique({
+      where: {
+        id: currentUserId,
+      },
 
-else {
-  /*
-   * A manager may not exist yet.
-   * In that case the user can remain
-   * unassigned until a valid manager
-   * exists.
-   */
+      include: {
+        role: {
+          include: {
+            permissions: {
+              include: {
+                permission: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+  if (!currentUser) {
+    throw new NotFoundException(
+      "Current user not found",
+    );
+  }
+
+  // -----------------------------------
+  // CHECK CREATE PERMISSION
+  // -----------------------------------
+
+  const canCreateUsers =
+    currentUser.role.isAdmin ||
+    currentUser.role.permissions.some(
+      (rolePermission) =>
+        rolePermission.permission.name ===
+        "users.create",
+    );
+
+  if (!canCreateUsers) {
+    throw new ForbiddenException(
+      "You are not allowed to create users",
+    );
+  }
+
+  // -----------------------------------
+  // CHECK EMAIL
+  // -----------------------------------
+
+  const existingUser =
+    await this.prisma.user.findUnique({
+      where: {
+        email: createUserDto.email,
+      },
+    });
+
+  if (existingUser) {
+    throw new ConflictException(
+      "Email already exists",
+    );
+  }
+
+  // -----------------------------------
+  // GET SELECTED ROLE
+  // -----------------------------------
+
+  const role =
+    await this.prisma.role.findUnique({
+      where: {
+        id: createUserDto.roleId,
+      },
+
+      include: {
+        reportsToRole: true,
+        group: true,
+      },
+    });
+
+  if (!role) {
+    throw new NotFoundException(
+      "Selected role not found",
+    );
+  }
+
+  // -----------------------------------
+  // NON-ADMIN CANNOT CREATE ADMIN
+  // -----------------------------------
+
   if (
-    managerId === undefined ||
-    managerId === null
+    role.isAdmin &&
+    !currentUser.role.isAdmin
+  ) {
+    throw new ForbiddenException(
+      "Only administrators can create administrator users",
+    );
+  }
+
+  // -----------------------------------
+  // MANAGER ACCESS
+  // -----------------------------------
+
+  const accessibleUserIds =
+    await this.getAccessibleUserIds(
+      currentUserId,
+    );
+
+  // -----------------------------------
+  // DETERMINE MANAGER
+  // -----------------------------------
+
+  let managerId:
+    | number
+    | null
+    | undefined =
+    createUserDto.managerId;
+
+  // -----------------------------------
+  // ADMINISTRATOR
+  // -----------------------------------
+
+  if (role.isAdmin) {
+    managerId = null;
+  }
+
+  // -----------------------------------
+  // TOP-LEVEL NON-ADMIN ROLE
+  // -----------------------------------
+
+  else if (
+    role.reportsToRoleId === null
   ) {
     managerId = null;
-  } else {
-    // -----------------------------------
-    // GET MANAGER
-    // -----------------------------------
+  }
 
-    const manager =
-      await this.prisma.user.findUnique({
-        where: {
-          id: managerId,
-        },
+  // -----------------------------------
+  // ROLE HAS REPORTING ROLE
+  // -----------------------------------
 
-        include: {
-          role: true,
-        },
-      });
-
-    if (!manager) {
-      throw new NotFoundException(
-        "Selected manager not found",
-      );
-    }
-
-    // -----------------------------------
-    // CANNOT MANAGE YOURSELF
-    // -----------------------------------
-
+  else {
     if (
-      manager.id === currentUserId
+      managerId === undefined ||
+      managerId === null
     ) {
-      throw new ForbiddenException(
-        "Invalid manager assignment",
-      );
-    }
+      managerId = null;
+    } else {
+      // -----------------------------------
+      // GET MANAGER
+      // -----------------------------------
 
-    // -----------------------------------
-    // MANAGER ROLE VALIDATION
-    // -----------------------------------
+      const manager =
+        await this.prisma.user.findUnique({
+          where: {
+            id: managerId,
+          },
 
-    if (
-      manager.role.id !==
-      role.reportsToRoleId
-    ) {
-      throw new ForbiddenException(
-        "Selected manager does not have the required reporting role",
-      );
-    }
+          include: {
+            role: true,
+          },
+        });
 
-    // -----------------------------------
-    // MANAGER ROLE MUST BE ACTIVE
-    // -----------------------------------
+      if (!manager) {
+        throw new NotFoundException(
+          "Selected manager not found",
+        );
+      }
 
-    if (!manager.role.active) {
-      throw new ForbiddenException(
-        "Cannot assign a user to someone with an inactive role",
-      );
+      // -----------------------------------
+      // MANAGER ACCESS
+      // -----------------------------------
+
+      if (
+        !currentUser.role.isAdmin &&
+        !accessibleUserIds.includes(
+          manager.id,
+        )
+      ) {
+        throw new ForbiddenException(
+          "You are not allowed to assign this manager",
+        );
+      }
+
+      // -----------------------------------
+      // MANAGER ROLE VALIDATION
+      // -----------------------------------
+
+      if (
+        manager.role.id !==
+        role.reportsToRoleId
+      ) {
+        throw new ForbiddenException(
+          "Selected manager does not have the required reporting role",
+        );
+      }
+
+      // -----------------------------------
+      // MANAGER ACTIVE
+      // -----------------------------------
+
+      if (!manager.active) {
+        throw new ForbiddenException(
+          "Cannot assign a user to an inactive user",
+        );
+      }
+
+      // -----------------------------------
+      // MANAGER ROLE ACTIVE
+      // -----------------------------------
+
+      if (!manager.role.active) {
+        throw new ForbiddenException(
+          "Cannot assign a user to someone with an inactive role",
+        );
+      }
     }
   }
-}
 
-    // -----------------------------------
-    // HASH PASSWORD
-    // -----------------------------------
+  // -----------------------------------
+  // HASH PASSWORD
+  // -----------------------------------
 
-    const hashedPassword =
-      await bcrypt.hash(
-        createUserDto.password,
-        10,
-      );
+  const hashedPassword =
+    await bcrypt.hash(
+      createUserDto.password,
+      10,
+    );
 
-    // -----------------------------------
-    // CREATE USER
-    // -----------------------------------
+  // -----------------------------------
+  // CREATE USER
+  // -----------------------------------
 
-    return this.prisma.user.create({
+  const createdUser =
+    await this.prisma.user.create({
       data: {
         name: createUserDto.name,
         email: createUserDto.email,
@@ -230,7 +272,11 @@ else {
       },
 
       include: {
-        role: true,
+        role: {
+          include: {
+            group: true,
+          },
+        },
 
         manager: {
           select: {
@@ -240,7 +286,46 @@ else {
         },
       },
     });
-  }
+
+  // -----------------------------------
+  // AUDIT LOG
+  // -----------------------------------
+
+  await this.auditLogsService.log({
+    actorId: currentUserId,
+    action: AuditAction.USER_CREATED,
+    entity: "User",
+    entityId: createdUser.id,
+    description:
+      `User ${createdUser.name} was created`,
+    newValues: {
+      name: createdUser.name,
+      email: createdUser.email,
+      role: createdUser.role.name,
+      group:
+        createdUser.role.group?.name ??
+        null,
+      manager:
+        createdUser.manager?.name ??
+        null,
+      active: createdUser.active,
+    },
+    ipAddress:
+  req.ip ||
+  req.headers["x-forwarded-for"] ||
+  null,
+
+userAgent:
+  req.headers["user-agent"] ||
+  null,
+  });
+
+  // -----------------------------------
+  // RETURN CREATED USER
+  // -----------------------------------
+
+  return createdUser;
+}
 
   // -----------------------------------
   // GET ACCESSIBLE USERS
@@ -284,48 +369,120 @@ else {
       );
     }
 
-    /*
-     * MANAGER / SUPERVISOR / DEVELOPER
-     *
-     * Start with the current user and
-     * recursively find everyone underneath.
-     *
-     * User hierarchy is determined by
-     * managerId, not by role level.
-     */
-    const accessibleIds = [
-      currentUser.id,
-    ];
+    // NON-ADMIN
+//
+// Start with the current user and recursively
+// find everyone underneath by managerId.
+const accessibleIds = [
+  currentUser.id,
+];
 
-    const queue = [
-      currentUser.id,
-    ];
+const queue = [
+  currentUser.id,
+];
 
-    while (queue.length > 0) {
-      const managerId =
-        queue.shift();
+while (queue.length > 0) {
+  const managerId = queue.shift();
 
-      const children =
-        await this.prisma.user.findMany({
-          where: {
-            managerId,
-          },
+  const children =
+    await this.prisma.user.findMany({
+      where: {
+        managerId,
+      },
 
-          select: {
-            id: true,
-          },
-        });
+      select: {
+        id: true,
+      },
+    });
 
-      for (const child of children) {
-        accessibleIds.push(
-          child.id,
-        );
-
-        queue.push(child.id);
-      }
+  for (const child of children) {
+    if (
+      !accessibleIds.includes(child.id)
+    ) {
+      accessibleIds.push(child.id);
+      queue.push(child.id);
     }
+  }
+}
 
-    return accessibleIds;
+/*
+ * Also include unassigned non-admin users
+ * whose role belongs to this user's reporting
+ * hierarchy.
+ *
+ * This allows a user to remain visible after
+ * their manager becomes inactive and managerId
+ * is cleared.
+ */
+const allRoles =
+  await this.prisma.role.findMany({
+    select: {
+      id: true,
+      reportsToRoleId: true,
+      isAdmin: true,
+    },
+  });
+
+const accessibleRoleIds = [
+  currentUser.roleId,
+];
+
+const roleQueue = [
+  currentUser.roleId,
+];
+
+while (roleQueue.length > 0) {
+  const parentRoleId =
+    roleQueue.shift();
+
+  const subordinateRoles =
+    allRoles.filter(
+      (role) =>
+        role.reportsToRoleId ===
+        parentRoleId,
+    );
+
+  for (const role of subordinateRoles) {
+    if (
+      !accessibleRoleIds.includes(
+        role.id,
+      )
+    ) {
+      accessibleRoleIds.push(
+        role.id,
+      );
+
+      roleQueue.push(role.id);
+    }
+  }
+}
+
+const unassignedUsers =
+  await this.prisma.user.findMany({
+    where: {
+      managerId: null,
+      roleId: {
+        in: accessibleRoleIds,
+      },
+      role: {
+        isAdmin: false,
+      },
+    },
+
+    select: {
+      id: true,
+    },
+  });
+
+for (const user of unassignedUsers) {
+  if (
+    !accessibleIds.includes(user.id)
+  ) {
+    accessibleIds.push(user.id);
+  }
+}
+
+return accessibleIds;
   }
 
   // -----------------------------------
@@ -333,37 +490,61 @@ else {
   // -----------------------------------
 
   async findAll(
-    currentUserId: number,
-  ) {
-    const accessibleUserIds =
-      await this.getAccessibleUserIds(
-        currentUserId,
-      );
+  currentUserId: number,
+  page = 1,
+  limit = 10,
+) {
+  const accessibleUserIds =
+    await this.getAccessibleUserIds(
+      currentUserId,
+    );
 
-    return this.prisma.user.findMany({
-      where: {
-        id: {
-          in: accessibleUserIds,
-          not: currentUserId,
-        },
-      },
+  const where = {
+    id: {
+      in: accessibleUserIds,
+      not: currentUserId,
+    },
+  };
 
-      include: {
-        role: true,
+  const [users, total] =
+    await Promise.all([
+      this.prisma.user.findMany({
+        where,
 
-        manager: {
-          select: {
-            id: true,
-            name: true,
+        include: {
+          role: true,
+
+          manager: {
+            select: {
+              id: true,
+              name: true,
+            },
           },
         },
-      },
 
-      orderBy: {
-        name: "asc",
-      },
-    });
-  }
+        orderBy: {
+          name: "asc",
+        },
+
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+
+      this.prisma.user.count({
+        where,
+      }),
+    ]);
+
+  return {
+    data: users,
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(
+      total / limit,
+    ),
+  };
+}
 
   // -----------------------------------
   // GET ORGANIZATION HIERARCHY
@@ -409,29 +590,35 @@ else {
             },
 
         select: {
-          id: true,
-          name: true,
-          email: true,
+        id: true,
+        name: true,
+        email: true,
+        active: true,
 
-          role: {
-            select: {
-              id: true,
-              name: true,
-              isAdmin: true,
+        role: {
+          select: {
+            id: true,
+            name: true,
+            isAdmin: true,
+
+            group: {
+              select: {
+                id: true,
+                name: true,
+              },
             },
           },
-
-          managerId: true,
         },
 
+        managerId: true,
+      },
         orderBy: {
           name: "asc",
         },
       });
 
     /*
-     * Create a lookup table so we can
-     * build the hierarchy efficiently.
+     * Create a lookup table.
      */
     const userMap = new Map<
       number,
@@ -443,6 +630,7 @@ else {
         id: user.id,
         name: user.name,
         email: user.email,
+        active: user.active,
         role: user.role,
         managerId: user.managerId,
         children: [],
@@ -485,111 +673,119 @@ else {
     };
   }
 
-// -----------------------------------
-// GET SINGLE USER
-// -----------------------------------
-
-async findOne(
-  targetUserId: number,
-  requesterId: number,
-) {
   // -----------------------------------
-  // GET REQUESTER
+  // GET SINGLE USER
   // -----------------------------------
 
-  const requester =
-    await this.prisma.user.findUnique({
-      where: {
-        id: requesterId,
-      },
+  async findOne(
+    targetUserId: number,
+    requesterId: number,
+  ) {
+    // -----------------------------------
+    // GET REQUESTER
+    // -----------------------------------
 
-      include: {
-        role: true,
-      },
-    });
-
-  if (!requester) {
-    throw new NotFoundException(
-      "Requester not found",
-    );
-  }
-
-  // -----------------------------------
-  // GET TARGET USER
-  // -----------------------------------
-
-  const user =
-    await this.prisma.user.findUnique({
-      where: {
-        id: targetUserId,
-      },
-
-      include: {
-        role: {
-          include: {
-            reportsToRole: true,
-          },
+    const requester =
+      await this.prisma.user.findUnique({
+        where: {
+          id: requesterId,
         },
 
-        manager: {
-          select: {
-            id: true,
-            name: true,
+        include: {
+          role: {
+            include: {
+              group: true,
+              reportsToRole: true,
+            },
           },
         },
-      },
-    });
+      });
 
-  if (!user) {
-    throw new NotFoundException(
-      "User not found",
-    );
+    if (!requester) {
+      throw new NotFoundException(
+        "Requester not found",
+      );
+    }
+
+    // -----------------------------------
+    // GET TARGET USER
+    // -----------------------------------
+
+    const user =
+      await this.prisma.user.findUnique({
+        where: {
+          id: targetUserId,
+        },
+
+        include: {
+          role: {
+            include: {
+              group: true,
+              reportsToRole: true,
+            },
+          },
+
+          manager: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+
+    if (!user) {
+      throw new NotFoundException(
+        "User not found",
+      );
+    }
+
+    // -----------------------------------
+    // CANNOT EDIT YOURSELF
+    // -----------------------------------
+
+    if (
+      targetUserId === requesterId
+    ) {
+      throw new ForbiddenException(
+        "You cannot manage your own account",
+      );
+    }
+
+    // -----------------------------------
+    // ADMIN CANNOT MANAGE ADMIN
+    // -----------------------------------
+
+    if (
+      requester.role.isAdmin &&
+      user.role.isAdmin
+    ) {
+      throw new ForbiddenException(
+        "Administrators cannot manage other administrators",
+      );
+    }
+
+    // -----------------------------------
+    // CHECK HIERARCHY ACCESS
+    // -----------------------------------
+
+    const accessibleUserIds =
+      await this.getAccessibleUserIds(
+        requesterId,
+      );
+
+    if (
+      !accessibleUserIds.includes(
+        targetUserId,
+      )
+    ) {
+      throw new ForbiddenException(
+        "You are not allowed to manage this user",
+      );
+    }
+
+    return user;
   }
-
-  // -----------------------------------
-  // CANNOT EDIT YOURSELF
-  // -----------------------------------
-
-  if (targetUserId === requesterId) {
-    throw new ForbiddenException(
-      "You cannot manage your own account",
-    );
-  }
-
-  // -----------------------------------
-  // ADMIN CANNOT MANAGE ADMIN
-  // -----------------------------------
-
-  if (
-    requester.role.isAdmin &&
-    user.role.isAdmin
-  ) {
-    throw new ForbiddenException(
-      "Administrators cannot manage other administrators",
-    );
-  }
-
-  // -----------------------------------
-  // CHECK HIERARCHY ACCESS
-  // -----------------------------------
-
-  const accessibleUserIds =
-    await this.getAccessibleUserIds(
-      requesterId,
-    );
-
-  if (
-    !accessibleUserIds.includes(
-      targetUserId,
-    )
-  ) {
-    throw new ForbiddenException(
-      "You are not allowed to manage this user",
-    );
-  }
-
-  return user;
-}
 
   // -----------------------------------
   // GET POSSIBLE MANAGERS
@@ -661,18 +857,14 @@ async findOne(
     // ADMIN REQUESTER
     // -----------------------------------
 
-    /*
-     * Admin can assign a manager anywhere
-     * in the organization, but the manager
-     * must have the role required by the
-     * target user's role.
-     */
     if (requester.role.isAdmin) {
       return this.prisma.user.findMany({
         where: {
           id: {
             not: targetUserId,
           },
+
+          active: true,
 
           role: {
             id: requiredManagerRoleId,
@@ -694,10 +886,6 @@ async findOne(
     // NON-ADMIN REQUESTER
     // -----------------------------------
 
-    /*
-     * The requester must be allowed to
-     * manage the target user.
-     */
     const accessibleIds =
       await this.getAccessibleUserIds(
         requesterId,
@@ -711,22 +899,14 @@ async findOne(
       return [];
     }
 
-    /*
-     * Find managers inside the requester's
-     * accessible hierarchy.
-     *
-     * The required manager role comes from
-     * reportsToRoleId.
-     *
-     * User hierarchy itself is still based
-     * on managerId.
-     */
     return this.prisma.user.findMany({
       where: {
         id: {
           in: accessibleIds,
           not: targetUserId,
         },
+
+        active: true,
 
         role: {
           id: requiredManagerRoleId,
@@ -752,10 +932,6 @@ async findOne(
     roleId: number,
     requesterId: number,
   ) {
-    // -----------------------------------
-    // GET SELECTED ROLE
-    // -----------------------------------
-
     const role =
       await this.prisma.role.findUnique({
         where: {
@@ -769,27 +945,15 @@ async findOne(
       );
     }
 
-    // -----------------------------------
-    // ADMIN HAS NO MANAGER
-    // -----------------------------------
-
     if (role.isAdmin) {
       return [];
     }
-
-    // -----------------------------------
-    // ROLE MUST HAVE REPORTING ROLE
-    // -----------------------------------
 
     if (
       role.reportsToRoleId === null
     ) {
       return [];
     }
-
-    // -----------------------------------
-    // GET REQUESTER
-    // -----------------------------------
 
     const requester =
       await this.prisma.user.findUnique({
@@ -808,23 +972,20 @@ async findOne(
       );
     }
 
+    const requiredManagerRoleId =
+      role.reportsToRoleId;
+
     // -----------------------------------
     // ADMIN
     // -----------------------------------
 
-    /*
-     * Admin can create users under the
-     * required manager role anywhere.
-     */
     if (requester.role.isAdmin) {
       return this.prisma.user.findMany({
         where: {
-          id: {
-            not: requesterId,
-          },
+          active: true,
 
           role: {
-            id: role.reportsToRoleId,
+            id: requiredManagerRoleId,
             active: true,
           },
         },
@@ -843,12 +1004,33 @@ async findOne(
     // NON-ADMIN
     // -----------------------------------
 
-    /*
-     * users.create is currently Admin-only,
-     * so non-admin users should not reach
-     * this point.
-     */
-    return [];
+    const accessibleUserIds =
+      await this.getAccessibleUserIds(
+        requesterId,
+      );
+
+    return this.prisma.user.findMany({
+      where: {
+        id: {
+          in: accessibleUserIds,
+        },
+
+        active: true,
+
+        role: {
+          id: requiredManagerRoleId,
+          active: true,
+        },
+      },
+
+      include: {
+        role: true,
+      },
+
+      orderBy: {
+        name: "asc",
+      },
+    });
   }
 
   // -----------------------------------
@@ -856,389 +1038,566 @@ async findOne(
   // -----------------------------------
 
   async update(
-    id: number,
-    updateUserDto: UpdateUserDto,
-    currentUserId: number,
-  ) {
-    // -----------------------------------
-    // GET CURRENT USER
-    // -----------------------------------
+  id: number,
+  updateUserDto: UpdateUserDto,
+  currentUserId: number,
+  req: any,
+) {
+  // -----------------------------------
+  // GET CURRENT USER
+  // -----------------------------------
 
-    const currentUser =
-      await this.prisma.user.findUnique({
-        where: {
-          id: currentUserId,
-        },
+  const currentUser =
+    await this.prisma.user.findUnique({
+      where: {
+        id: currentUserId,
+      },
+      include: {
+        role: true,
+      },
+    });
 
-        include: {
-          role: true,
-        },
-      });
+  if (!currentUser) {
+    throw new NotFoundException(
+      "Current user not found",
+    );
+  }
 
-    if (!currentUser) {
-      throw new NotFoundException(
-        "Current user not found",
-      );
-    }
+  // -----------------------------------
+  // CANNOT EDIT YOURSELF
+  // -----------------------------------
 
-    // -----------------------------------
-    // CANNOT EDIT YOURSELF
-    // -----------------------------------
+  if (id === currentUserId) {
+    throw new ForbiddenException(
+      "You cannot manage your own account",
+    );
+  }
 
-    if (id === currentUserId) {
-      throw new ForbiddenException(
-        "You cannot manage your own account",
-      );
-    }
+  // -----------------------------------
+  // GET TARGET USER
+  // -----------------------------------
 
-    // -----------------------------------
-    // GET TARGET USER
-    // -----------------------------------
-
-    const user =
-      await this.prisma.user.findUnique({
-        where: {
-          id,
-        },
-
-        include: {
-          role: {
-            include: {
-              reportsToRole: true,
-            },
-          },
-        },
-      });
-
-    if (!user) {
-      throw new NotFoundException(
-        "User not found",
-      );
-    }
-
-    // -----------------------------------
-    // ADMIN CANNOT EDIT ANOTHER ADMIN
-    // -----------------------------------
-
-    if (
-      currentUser.role.isAdmin &&
-      user.role.isAdmin
-    ) {
-      throw new ForbiddenException(
-        "Administrators cannot manage other administrators",
-      );
-    }
-
-    // -----------------------------------
-    // CHECK HIERARCHY ACCESS
-    // -----------------------------------
-
-    const accessibleUserIds =
-      await this.getAccessibleUserIds(
-        currentUserId,
-      );
-
-    if (
-      !accessibleUserIds.includes(id)
-    ) {
-      throw new ForbiddenException(
-        "You are not allowed to manage this user",
-      );
-    }
-
-    // -----------------------------------
-    // DETERMINE TARGET ROLE
-    // -----------------------------------
-
-    let targetRoleId =
-      user.roleId;
-
-    if (
-      updateUserDto.roleId !== undefined
-    ) {
-      targetRoleId =
-        updateUserDto.roleId;
-    }
-
-    const targetRole =
-      await this.prisma.role.findUnique({
-        where: {
-          id: targetRoleId,
-        },
-
+  const user =
+  await this.prisma.user.findUnique({
+    where: {
+      id,
+    },
+    include: {
+      role: {
         include: {
           reportsToRole: true,
+          group: true,
         },
-      });
+      },
+      manager: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  });
 
-    if (!targetRole) {
-      throw new NotFoundException(
-        "Selected role not found",
+  if (!user) {
+    throw new NotFoundException(
+      "User not found",
+    );
+  }
+
+  // -----------------------------------
+  // ADMIN CANNOT EDIT ANOTHER ADMIN
+  // -----------------------------------
+
+  if (
+    currentUser.role.isAdmin &&
+    user.role.isAdmin
+  ) {
+    throw new ForbiddenException(
+      "Administrators cannot manage other administrators",
+    );
+  }
+
+  // -----------------------------------
+  // CHECK HIERARCHY ACCESS
+  // -----------------------------------
+
+  const accessibleUserIds =
+    await this.getAccessibleUserIds(
+      currentUserId,
+    );
+
+  if (
+    !accessibleUserIds.includes(id)
+  ) {
+    throw new ForbiddenException(
+      "You are not allowed to manage this user",
+    );
+  }
+
+  // -----------------------------------
+  // DETERMINE TARGET ROLE
+  // -----------------------------------
+
+  let targetRoleId =
+    user.roleId;
+
+  if (
+    updateUserDto.roleId !== undefined
+  ) {
+    targetRoleId =
+      updateUserDto.roleId;
+  }
+
+  const targetRole =
+    await this.prisma.role.findUnique({
+      where: {
+        id: targetRoleId,
+      },
+      include: {
+        reportsToRole: true,
+      },
+    });
+
+  if (!targetRole) {
+    throw new NotFoundException(
+      "Selected role not found",
+    );
+  }
+
+  // -----------------------------------
+  // TARGET ROLE MUST BE ACTIVE
+  // -----------------------------------
+
+  if (!targetRole.active) {
+    throw new ForbiddenException(
+      "Cannot assign an inactive role",
+    );
+  }
+
+  // -----------------------------------
+  // NON-ADMIN CANNOT ASSIGN ADMIN ROLE
+  // -----------------------------------
+
+  if (
+    targetRole.isAdmin &&
+    !currentUser.role.isAdmin
+  ) {
+    throw new ForbiddenException(
+      "Only administrators can assign administrator roles",
+    );
+  }
+
+  // -----------------------------------
+  // ADMIN ROLE
+  // -----------------------------------
+
+  if (targetRole.isAdmin) {
+    if (
+      updateUserDto.managerId !==
+        undefined &&
+      updateUserDto.managerId !== null
+    ) {
+      throw new ForbiddenException(
+        "Administrator users cannot have a manager",
+      );
+    }
+
+    updateUserDto.managerId = null;
+  }
+
+  // -----------------------------------
+  // MANAGER VALIDATION
+  // -----------------------------------
+
+  if (
+    !targetRole.isAdmin &&
+    updateUserDto.managerId !==
+      undefined
+  ) {
+    // -----------------------------------
+    // ROLE MUST HAVE REPORTING ROLE
+    // -----------------------------------
+
+    if (
+      targetRole.reportsToRoleId ===
+      null
+    ) {
+      throw new ForbiddenException(
+        "Selected role must have a reporting role",
       );
     }
 
     // -----------------------------------
-    // ADMIN ROLE
+    // NO MANAGER
     // -----------------------------------
 
-    /*
-     * Administrator users never have
-     * a manager.
-     */
-    if (targetRole.isAdmin) {
-      if (
-        updateUserDto.managerId !==
-        undefined &&
-        updateUserDto.managerId !== null
-      ) {
-        throw new ForbiddenException(
-          "Administrator users cannot have a manager",
+    if (
+      updateUserDto.managerId === null
+    ) {
+      /*
+       * Temporarily unassigned is allowed.
+       */
+    } else {
+      // -----------------------------------
+      // GET MANAGER
+      // -----------------------------------
+
+      const manager =
+        await this.prisma.user.findUnique({
+          where: {
+            id: updateUserDto.managerId,
+          },
+          include: {
+            role: true,
+          },
+        });
+
+      if (!manager) {
+        throw new NotFoundException(
+          "Manager not found",
         );
       }
 
-      // Force managerId to null when
-      // changing a user into an admin.
-      updateUserDto.managerId = null;
-    }
+      // -----------------------------------
+      // CANNOT MANAGE SELF
+      // -----------------------------------
 
-    // -----------------------------------
-// MANAGER VALIDATION
-// -----------------------------------
-
-if (
-  !targetRole.isAdmin &&
-  updateUserDto.managerId !== undefined
-) {
-  // -----------------------------------
-  // ROLE MUST HAVE REPORTING ROLE
-  // -----------------------------------
-
-  if (
-    targetRole.reportsToRoleId === null
-  ) {
-    throw new ForbiddenException(
-      "Selected role must have a reporting role",
-    );
-  }
-
-  // -----------------------------------
-  // NO MANAGER
-  // -----------------------------------
-
-  /*
-   * A role can require a reporting role
-   * without a matching user currently
-   * existing in the database.
-   *
-   * Therefore managerId = null is allowed.
-   */
-  if (updateUserDto.managerId === null) {
-    // Nothing else to validate.
-  } else {
-    // -----------------------------------
-    // GET MANAGER
-    // -----------------------------------
-
-    const manager =
-      await this.prisma.user.findUnique({
-        where: {
-          id: updateUserDto.managerId,
-        },
-
-        include: {
-          role: true,
-        },
-      });
-
-    if (!manager) {
-      throw new NotFoundException(
-        "Manager not found",
-      );
-    }
-
-    // -----------------------------------
-    // CANNOT MANAGE SELF
-    // -----------------------------------
-
-    if (manager.id === id) {
-      throw new ForbiddenException(
-        "A user cannot be their own manager",
-      );
-    }
-
-    // -----------------------------------
-    // MANAGER ACCESS
-    // -----------------------------------
-
-    if (
-      !accessibleUserIds.includes(
-        manager.id,
-      )
-    ) {
-      throw new ForbiddenException(
-        "You are not allowed to assign this manager",
-      );
-    }
-
-    // -----------------------------------
-    // MANAGER ROLE
-    // -----------------------------------
-
-    if (
-      manager.role.id !==
-      targetRole.reportsToRoleId
-    ) {
-      throw new ForbiddenException(
-        "Selected manager does not have the required reporting role",
-      );
-    }
-
-    // -----------------------------------
-    // MANAGER ACTIVE
-    // -----------------------------------
-
-    if (!manager.role.active) {
-      throw new ForbiddenException(
-        "Cannot assign a user to someone with an inactive role",
-      );
-    }
-  }
-}
-
-    // -----------------------------------
-// ROLE CHANGE WITHOUT MANAGER CHANGE
-// -----------------------------------
-
-/*
- * If the role changes but managerId was
- * not supplied, keep the existing manager
- * only if that manager is still valid for
- * the new role.
- *
- * If there is no existing manager, that is
- * allowed. The user simply remains without
- * a manager until a valid manager exists.
- */
-
-if (
-  updateUserDto.roleId !== undefined &&
-  !targetRole.isAdmin &&
-  updateUserDto.managerId === undefined
-) {
-  // -----------------------------------
-  // ROLE MUST HAVE REPORTING ROLE
-  // -----------------------------------
-
-  if (
-    targetRole.reportsToRoleId === null
-  ) {
-    throw new ForbiddenException(
-      "Selected role must have a reporting role",
-    );
-  }
-
-  // -----------------------------------
-  // NO EXISTING MANAGER
-  // -----------------------------------
-
-  if (user.managerId === null) {
-    /*
-     * No manager currently exists.
-     *
-     * This is allowed. The user's manager
-     * remains null until a valid manager
-     * is assigned later.
-     */
-  } else {
-    // -----------------------------------
-    // VALIDATE EXISTING MANAGER
-    // -----------------------------------
-
-    const existingManager =
-      await this.prisma.user.findUnique({
-        where: {
-          id: user.managerId,
-        },
-
-        include: {
-          role: true,
-        },
-      });
-
-    if (!existingManager) {
-      throw new NotFoundException(
-        "Existing manager not found",
-      );
-    }
-
-    // -----------------------------------
-    // MANAGER ROLE
-    // -----------------------------------
-
-    if (
-      existingManager.role.id !==
-      targetRole.reportsToRoleId
-    ) {
-      throw new ForbiddenException(
-        "The user's current manager does not have the required reporting role for the selected role",
-      );
-    }
-
-    // -----------------------------------
-    // MANAGER ACTIVE
-    // -----------------------------------
-
-    if (
-      !existingManager.role.active
-    ) {
-      throw new ForbiddenException(
-        "Cannot assign a user to someone with an inactive role",
-      );
-    }
-  }
-}
-
-    // -----------------------------------
-    // PREPARE UPDATE
-    // -----------------------------------
-
-    const data: any = {
-      ...updateUserDto,
-    };
-
-    /*
-     * Hash password only when a new
-     * password was provided.
-     */
-    if (updateUserDto.password) {
-      data.password =
-        await bcrypt.hash(
-          updateUserDto.password,
-          10,
+      if (manager.id === id) {
+        throw new ForbiddenException(
+          "A user cannot be their own manager",
         );
-    } else {
-      delete data.password;
+      }
+
+      // -----------------------------------
+      // MANAGER ACCESS
+      // -----------------------------------
+
+      if (
+        !currentUser.role.isAdmin &&
+        !accessibleUserIds.includes(
+          manager.id,
+        )
+      ) {
+        throw new ForbiddenException(
+          "You are not allowed to assign this manager",
+        );
+      }
+
+      // -----------------------------------
+      // MANAGER ROLE
+      // -----------------------------------
+
+      if (
+        manager.role.id !==
+        targetRole.reportsToRoleId
+      ) {
+        throw new ForbiddenException(
+          "Selected manager does not have the required reporting role",
+        );
+      }
+
+      // -----------------------------------
+      // MANAGER ACTIVE
+      // -----------------------------------
+
+      if (!manager.active) {
+        updateUserDto.managerId = null;
+      }
+
+      // -----------------------------------
+      // MANAGER ROLE ACTIVE
+      // -----------------------------------
+
+      if (
+        manager.role.active === false
+      ) {
+        updateUserDto.managerId = null;
+      }
+    }
+  }
+
+  // -----------------------------------
+  // ROLE CHANGE WITHOUT MANAGER CHANGE
+  // -----------------------------------
+
+  if (
+    updateUserDto.roleId !==
+      undefined &&
+    !targetRole.isAdmin &&
+    updateUserDto.managerId ===
+      undefined
+  ) {
+    // -----------------------------------
+    // ROLE MUST HAVE REPORTING ROLE
+    // -----------------------------------
+
+    if (
+      targetRole.reportsToRoleId ===
+      null
+    ) {
+      throw new ForbiddenException(
+        "Selected role must have a reporting role",
+      );
     }
 
-    return this.prisma.user.update({
-      where: {
-        id,
-      },
+    // -----------------------------------
+    // NO EXISTING MANAGER
+    // -----------------------------------
 
-      data,
+    if (user.managerId === null) {
+      /*
+       * User remains unassigned.
+       */
+    } else {
+      // -----------------------------------
+      // VALIDATE EXISTING MANAGER
+      // -----------------------------------
 
-      include: {
-        role: true,
-
-        manager: {
-          select: {
-            id: true,
-            name: true,
+      const existingManager =
+        await this.prisma.user.findUnique({
+          where: {
+            id: user.managerId,
           },
-        },
-      },
-    });
+          include: {
+            role: true,
+          },
+        });
+
+      if (!existingManager) {
+        throw new NotFoundException(
+          "Existing manager not found",
+        );
+      }
+
+      // -----------------------------------
+      // EXISTING MANAGER ACCESS
+      // -----------------------------------
+
+      if (
+        !currentUser.role.isAdmin &&
+        !accessibleUserIds.includes(
+          existingManager.id,
+        )
+      ) {
+        throw new ForbiddenException(
+          "You are not allowed to keep this manager",
+        );
+      }
+
+      // -----------------------------------
+      // MANAGER ACTIVE
+      // -----------------------------------
+
+      if (!existingManager.active) {
+        updateUserDto.managerId = null;
+      }
+
+      // -----------------------------------
+      // MANAGER ROLE ACTIVE
+      // -----------------------------------
+
+      if (
+        existingManager.role.active ===
+        false
+      ) {
+        updateUserDto.managerId = null;
+      }
+
+      // -----------------------------------
+      // MANAGER ROLE
+      // -----------------------------------
+
+      if (
+        updateUserDto.managerId !== null &&
+        existingManager.role.id !==
+          targetRole.reportsToRoleId
+      ) {
+        throw new ForbiddenException(
+          "The user's current manager does not have the required reporting role for the selected role",
+        );
+      }
+    }
   }
+
+  // -----------------------------------
+  // PREPARE UPDATE
+  // -----------------------------------
+
+  const data: any = {
+    ...updateUserDto,
+  };
+
+  // -----------------------------------
+  // HASH PASSWORD
+  // -----------------------------------
+
+  if (updateUserDto.password) {
+    data.password =
+      await bcrypt.hash(
+        updateUserDto.password,
+        10,
+      );
+  } else {
+    delete data.password;
+  }
+
+  // -----------------------------------
+  // SAVE
+  // -----------------------------------
+
+  const updatedUser =
+  await this.prisma.user.update({
+    where: {
+      id,
+    },
+
+    data,
+
+    include: {
+    role: {
+      include: {
+        reportsToRole: true,
+        group: true,
+      },
+    },
+
+    manager: {
+      select: {
+        id: true,
+        name: true,
+      },
+    },
+  },
+  });
+
+await this.auditLogsService.log({
+  actorId: currentUserId,
+  action: AuditAction.USER_UPDATED,
+  entity: "User",
+  entityId: updatedUser.id,
+  description:
+    `User ${updatedUser.name} was updated`,
+
+  oldValues: {
+    name: user.name,
+    email: user.email,
+    role: user.role.name,
+    group:
+      user.role.group?.name ??
+      null,
+    active: user.active,
+    manager:
+      user.manager?.name ??
+      null,
+  },
+
+  newValues: {
+    name: updatedUser.name,
+    email: updatedUser.email,
+    role: updatedUser.role.name,
+    group:
+      updatedUser.role.group?.name ??
+      null,
+    active: updatedUser.active,
+    manager:
+      updatedUser.manager?.name ??
+      null,
+  },
+
+  ipAddress:
+    req.ip ||
+    req.headers["x-forwarded-for"] ||
+    null,
+
+  userAgent:
+    req.headers["user-agent"] ||
+    null,
+});
+
+// -----------------------------------
+// ROLE CHANGE AUDIT
+// -----------------------------------
+
+if (
+  user.roleId !==
+  updatedUser.roleId
+) {
+  await this.auditLogsService.log({
+    actorId: currentUserId,
+    action: AuditAction.USER_ROLE_CHANGED,
+    entity: "User",
+    entityId: updatedUser.id,
+    description:
+      `User ${updatedUser.name} role was changed`,
+
+    oldValues: {
+      roleId: user.roleId,
+      role: user.role.name,
+    },
+
+    newValues: {
+      roleId: updatedUser.roleId,
+      role: updatedUser.role.name,
+    },
+
+    ipAddress:
+      req.ip ||
+      req.headers["x-forwarded-for"] ||
+      null,
+
+    userAgent:
+      req.headers["user-agent"] ||
+      null,
+  });
+}
+
+// -----------------------------------
+// MANAGER CHANGE AUDIT
+// -----------------------------------
+
+if (
+  user.managerId !==
+  updatedUser.managerId
+) {
+  await this.auditLogsService.log({
+    actorId: currentUserId,
+    action: AuditAction.USER_MANAGER_CHANGED,
+    entity: "User",
+    entityId: updatedUser.id,
+    description:
+      `User ${updatedUser.name} manager was changed`,
+
+    oldValues: {
+      managerId:
+        user.managerId ??
+        null,
+      manager:
+        user.manager?.name ??
+        null,
+    },
+
+    newValues: {
+      managerId:
+        updatedUser.managerId ??
+        null,
+      manager:
+        updatedUser.manager?.name ??
+        null,
+    },
+
+    ipAddress:
+      req.ip ||
+      req.headers["x-forwarded-for"] ||
+      null,
+
+    userAgent:
+      req.headers["user-agent"] ||
+      null,
+  });
+}
+
+return updatedUser;
+}
 
   // -----------------------------------
   // DELETE USER
@@ -1247,21 +1606,22 @@ if (
   async remove(
     id: number,
     currentUserId: number,
+    req: any,
   ) {
     // -----------------------------------
     // GET CURRENT USER
     // -----------------------------------
 
     const currentUser =
-      await this.prisma.user.findUnique({
-        where: {
-          id: currentUserId,
-        },
+  await this.prisma.user.findUnique({
+    where: {
+      id: currentUserId,
+    },
 
-        include: {
-          role: true,
-        },
-      });
+    include: {
+      role: true,
+    },
+  });
 
     if (!currentUser) {
       throw new NotFoundException(
@@ -1290,8 +1650,19 @@ if (
         },
 
         include: {
-          role: true,
+        role: {
+          include: {
+            group: true,
+          },
         },
+
+        manager: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
       });
 
     if (!user) {
@@ -1334,14 +1705,192 @@ if (
     // DELETE
     // -----------------------------------
 
-    await this.prisma.user.delete({
-      where: {
-        id,
-      },
-    });
+    await this.auditLogsService.log({
+  actorId: currentUserId,
+  action: AuditAction.USER_DELETED,
+  entity: "User",
+  entityId: user.id,
+  description:
+    `User ${user.name} was deleted`,
 
-    return {
-      message: "User deleted successfully",
-    };
+  oldValues: {
+    name: user.name,
+    email: user.email,
+    role: user.role.name,
+    group:
+      user.role.group?.name ??
+      null,
+    manager:
+      user.manager?.name ??
+      null,
+    active: user.active,
+  },
+
+  ipAddress:
+    req.ip ||
+    req.headers["x-forwarded-for"] ||
+    null,
+
+  userAgent:
+    req.headers["user-agent"] ||
+    null,
+});
+
+await this.prisma.user.delete({
+  where: {
+    id,
+  },
+});
+
+return {
+  message: "User deleted successfully",
+};
+  }
+
+  // -----------------------------------
+  // UPDATE USER STATUS
+  // -----------------------------------
+
+  async updateStatus(
+    id: number,
+    active: boolean,
+    currentUserId: number,
+    req: any,
+  ) {
+    // -----------------------------------
+    // GET CURRENT USER
+    // -----------------------------------
+
+    const currentUser =
+      await this.prisma.user.findUnique({
+        where: {
+          id: currentUserId,
+        },
+
+        include: {
+          role: true,
+        },
+      });
+
+    if (!currentUser) {
+      throw new NotFoundException(
+        "Current user not found",
+      );
+    }
+
+    // -----------------------------------
+    // CANNOT CHANGE OWN STATUS
+    // -----------------------------------
+
+    if (id === currentUserId) {
+      throw new ForbiddenException(
+        "You cannot change your own account status",
+      );
+    }
+
+    // -----------------------------------
+    // GET TARGET USER
+    // -----------------------------------
+
+    const user =
+      await this.prisma.user.findUnique({
+        where: {
+          id,
+        },
+
+        include: {
+          role: true,
+        },
+      });
+
+    if (!user) {
+      throw new NotFoundException(
+        "User not found",
+      );
+    }
+
+    // -----------------------------------
+    // ADMIN CANNOT MANAGE ADMIN
+    // -----------------------------------
+
+    if (
+      currentUser.role.isAdmin &&
+      user.role.isAdmin
+    ) {
+      throw new ForbiddenException(
+        "Administrators cannot manage other administrators",
+      );
+    }
+
+    // -----------------------------------
+    // CHECK HIERARCHY ACCESS
+    // -----------------------------------
+
+    const accessibleUserIds =
+      await this.getAccessibleUserIds(
+        currentUserId,
+      );
+
+    if (
+      !accessibleUserIds.includes(id)
+    ) {
+      throw new ForbiddenException(
+        "You are not allowed to change this user's status",
+      );
+    }
+
+    // -----------------------------------
+    // UPDATE STATUS
+    // -----------------------------------
+
+    const updatedUser =
+  await this.prisma.user.update({
+    where: {
+      id,
+    },
+
+    data: {
+      active,
+    },
+
+    include: {
+      role: true,
+
+      manager: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  });
+
+await this.auditLogsService.log({
+  actorId: currentUserId,
+  action: AuditAction.USER_STATUS_CHANGED,
+  entity: "User",
+  entityId: updatedUser.id,
+  description:
+    `User ${updatedUser.name} status was changed`,
+
+  oldValues: {
+    active: user.active,
+  },
+
+  newValues: {
+    active: updatedUser.active,
+  },
+
+  ipAddress:
+    req.ip ||
+    req.headers["x-forwarded-for"] ||
+    null,
+
+  userAgent:
+    req.headers["user-agent"] ||
+    null,
+});
+
+return updatedUser;
   }
 }

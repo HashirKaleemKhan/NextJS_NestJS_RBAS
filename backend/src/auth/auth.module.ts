@@ -7,11 +7,12 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { UsersModule } from '../users/users.module';
 import { JwtStrategy } from './strategies/jwt.strategy/jwt.strategy';
+import { AuditLogsModule } from "../audit-logs/audit-logs.module";
 
 @Module({
   imports: [
     UsersModule,
-
+    AuditLogsModule,
     JwtModule.register({
   secret: 'my-super-secret-key',
   signOptions: {

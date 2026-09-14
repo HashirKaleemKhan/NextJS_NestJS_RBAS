@@ -19,6 +19,7 @@ export default function CreateGroupPage() {
     useState<Permission[]>([]);
 
   const [name, setName] = useState("");
+
   const [selectedPermissions, setSelectedPermissions] =
     useState<number[]>([]);
 
@@ -34,20 +35,17 @@ export default function CreateGroupPage() {
   const [error, setError] =
     useState("");
 
-  // -----------------------------------
-  // LOAD PERMISSIONS
-  // -----------------------------------
-
   useEffect(() => {
     loadPermissions();
   }, []);
 
   async function loadPermissions() {
     try {
+      setLoading(true);
+      setError("");
+
       const response =
-        await api.get(
-          "/roles/permissions",
-        );
+        await api.get("/roles/permissions");
 
       setPermissions(
         response.data.filter(
@@ -56,6 +54,11 @@ export default function CreateGroupPage() {
         ),
       );
     } catch (err: any) {
+      console.error(
+        "Unable to load permissions:",
+        err,
+      );
+
       setError(
         err?.response?.data?.message ||
           "Unable to load permissions.",
@@ -65,30 +68,16 @@ export default function CreateGroupPage() {
     }
   }
 
-  // -----------------------------------
-  // TOGGLE PERMISSION
-  // -----------------------------------
-
-  function togglePermission(
-    id: number,
-  ) {
-    setSelectedPermissions(
-      (current) =>
-        current.includes(id)
-          ? current.filter(
-              (permissionId) =>
-                permissionId !== id,
-            )
-          : [
-              ...current,
-              id,
-            ],
+  function togglePermission(id: number) {
+    setSelectedPermissions((current) =>
+      current.includes(id)
+        ? current.filter(
+            (permissionId) =>
+              permissionId !== id,
+          )
+        : [...current, id],
     );
   }
-
-  // -----------------------------------
-  // CREATE
-  // -----------------------------------
 
   async function createGroup(
     e: React.FormEvent,
@@ -104,9 +93,7 @@ export default function CreateGroupPage() {
       return;
     }
 
-    if (
-      selectedPermissions.length === 0
-    ) {
+    if (selectedPermissions.length === 0) {
       setError(
         "Select at least one parent permission.",
       );
@@ -123,8 +110,15 @@ export default function CreateGroupPage() {
           selectedPermissions,
       });
 
-      router.push("/groups?success=created");
+      router.replace(
+        "/groups?success=created",
+      );
     } catch (err: any) {
+      console.error(
+        "Unable to create group:",
+        err,
+      );
+
       setError(
         err?.response?.data?.message ||
           "Unable to create group.",
@@ -136,13 +130,13 @@ export default function CreateGroupPage() {
 
   return (
     <DashboardLayout>
+      <div className="company-groups-edit-page">
 
-      <div className="groups-page">
+        {/* HEADER */}
 
-        <div className="page-header">
-
+        <div className="company-page-header">
           <div>
-            <div className="page-eyebrow">
+            <div className="company-page-eyebrow">
               ACCESS CONTROL
             </div>
 
@@ -154,41 +148,54 @@ export default function CreateGroupPage() {
             </p>
           </div>
 
-          <button
-            className="button button-secondary"
-            onClick={() =>
-              router.push("/groups")
-            }
-          >
-            ← Back to groups
-          </button>
-
+          <div className="company-page-actions">
+            <button
+              type="button"
+              className="company-secondary-button"
+              onClick={() =>
+                router.push("/groups")
+              }
+              disabled={saving}
+            >
+              ← Back to groups
+            </button>
+          </div>
         </div>
 
+        {/* ERROR */}
+
         {error && (
-          <div className="groups-alert groups-alert-error">
+          <div className="company-users-error">
             {Array.isArray(error)
               ? error.join(", ")
               : error}
           </div>
         )}
 
-        <section className="groups-form-card">
+        {/* FORM PANEL */}
 
-          <div className="groups-section-heading">
+        <section className="company-groups-edit-panel">
 
-            <div className="groups-section-icon">
+          {/* PANEL HEADER */}
+
+          <div className="company-groups-edit-panel-header">
+
+            <div className="company-groups-edit-heading-icon">
               +
             </div>
 
             <div>
+              <div className="company-panel-eyebrow">
+                GROUP CONFIGURATION
+              </div>
+
               <h2>
                 Group information
               </h2>
 
               <p>
-                Define the group and its
-                application areas.
+                Define the group name,
+                permissions, and availability.
               </p>
             </div>
 
@@ -196,50 +203,72 @@ export default function CreateGroupPage() {
 
           <form
             onSubmit={createGroup}
-            className="groups-form"
+            className="company-groups-edit-form"
           >
 
-            <div className="groups-field">
+            {/* GROUP NAME */}
 
-              <label>
+            <div className="company-groups-edit-field">
+
+              <label htmlFor="group-name">
                 Group name
               </label>
 
               <input
+                id="group-name"
                 type="text"
                 value={name}
                 onChange={(e) =>
-                  setName(
-                    e.target.value,
-                  )
+                  setName(e.target.value)
                 }
                 placeholder="e.g. Management"
+                disabled={saving}
                 required
               />
 
+              <small>
+                Choose a clear name that describes
+                the group.
+              </small>
+
             </div>
 
-            <div className="groups-field">
+            {/* PERMISSIONS */}
 
-              <div className="groups-field-label">
+            <div className="company-groups-edit-field">
 
-                <label>
-                  Parent permissions
-                </label>
+              <div className="company-groups-edit-field-header">
 
-                <span>
-                  Select the application
-                  areas this group can
-                  contain.
+                <div>
+                  <label>
+                    Parent permissions
+                  </label>
+
+                  <small>
+                    Select the application areas
+                    this group can contain.
+                  </small>
+                </div>
+
+                <span className="company-groups-selected-count">
+                  {selectedPermissions.length} selected
                 </span>
 
               </div>
 
-              <div className="permission-grid">
+              <div className="company-groups-permission-grid">
 
                 {loading ? (
-                  <div>
-                    Loading permissions...
+                  <div className="company-groups-permission-loading">
+                    <div className="company-loading-spinner" />
+
+                    <span>
+                      Loading permissions...
+                    </span>
+                  </div>
+                ) : permissions.length === 0 ? (
+                  <div className="company-groups-permission-empty">
+                    No parent permissions available.
                   </div>
                 ) : (
                   permissions.map(
@@ -251,9 +280,7 @@ export default function CreateGroupPage() {
 
                       const label =
                         permission.name
-                          .split(
-                            ".",
-                          )[0]
+                          .split(".")[0]
                           .replace(
                             /^./,
                             (char) =>
@@ -262,13 +289,12 @@ export default function CreateGroupPage() {
 
                       return (
                         <button
-                          key={
-                            permission.id
-                          }
+                          key={permission.id}
                           type="button"
-                          className={`permission-option ${
+                          disabled={saving}
+                          className={`company-groups-permission-option ${
                             selected
-                              ? "permission-option-selected"
+                              ? "company-groups-permission-option-selected"
                               : ""
                           }`}
                           onClick={() =>
@@ -277,15 +303,11 @@ export default function CreateGroupPage() {
                             )
                           }
                         >
-
-                          <span className="permission-check">
-                            {selected
-                              ? "✓"
-                              : ""}
+                          <span className="company-groups-permission-check">
+                            {selected ? "✓" : ""}
                           </span>
 
-                          <span className="permission-option-content">
-
+                          <span className="company-groups-permission-content">
                             <strong>
                               {label}
                             </strong>
@@ -293,9 +315,7 @@ export default function CreateGroupPage() {
                             <small>
                               Application area
                             </small>
-
                           </span>
-
                         </button>
                       );
                     },
@@ -304,36 +324,49 @@ export default function CreateGroupPage() {
 
               </div>
 
-            </div>
-
-            <div className="groups-status-row">
-
-              <div>
-
-                <strong>
-                  Group status
-                </strong>
+              <div className="company-groups-edit-help">
+                <span>ⓘ</span>
 
                 <span>
+                  Groups contain parent permissions
+                  only. Child permissions are selected
+                  later when configuring a role.
+                </span>
+              </div>
+
+            </div>
+
+            {/* STATUS */}
+
+            <div className="company-groups-status-card">
+
+              <div className="company-groups-status-copy">
+
+                <div className="company-groups-status-title">
+                  Group status
+                </div>
+
+                <div className="company-groups-status-description">
                   {active
                     ? "This group can be assigned to roles."
                     : "This group is currently unavailable."}
-                </span>
+                </div>
 
               </div>
 
               <button
                 type="button"
-                className={`status-toggle ${
+                disabled={saving}
+                className={`company-groups-status-toggle ${
                   active
-                    ? "status-toggle-active"
+                    ? "company-groups-status-toggle-active"
                     : ""
                 }`}
                 onClick={() =>
                   setActive(!active)
                 }
               >
-                <span className="status-toggle-dot" />
+                <span className="company-groups-status-toggle-dot" />
 
                 {active
                   ? "Active"
@@ -342,24 +375,26 @@ export default function CreateGroupPage() {
 
             </div>
 
-            <div className="groups-form-actions">
+            {/* ACTIONS */}
+
+            <div className="company-groups-edit-actions">
 
               <button
                 type="button"
-                className="button button-secondary"
+                className="company-secondary-button"
                 onClick={() =>
                   router.push("/groups")
                 }
+                disabled={saving}
               >
                 Cancel
               </button>
 
               <button
                 type="submit"
-                className="button button-primary"
+                className="company-primary-button"
                 disabled={
-                  saving ||
-                  loading
+                  saving || loading
                 }
               >
                 {saving
@@ -374,7 +409,6 @@ export default function CreateGroupPage() {
         </section>
 
       </div>
-
     </DashboardLayout>
   );
 }

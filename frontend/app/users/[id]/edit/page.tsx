@@ -7,16 +7,52 @@ import { api } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 
+type Group = {
+  id: number;
+  name: string;
+  active: boolean;
+};
+
+type Role = {
+  id: number;
+  name: string;
+  level: number;
+  isAdmin: boolean;
+  active: boolean;
+  groupId: number | null;
+
+  group?: Group | null;
+
+  reportsToRoleId: number | null;
+
+  reportsToRole?: {
+    id: number;
+    name: string;
+    isAdmin: boolean;
+    active: boolean;
+  } | null;
+};
+
 type User = {
   id: number;
   name: string;
   email: string;
+  active: boolean;
 
   role?: {
     id?: number;
     name: string;
     level?: number;
     active?: boolean;
+    isAdmin?: boolean;
+    group?: Group | null;
+    reportsToRoleId?: number | null;
+    reportsToRole?: {
+      id: number;
+      name: string;
+      isAdmin: boolean;
+      active: boolean;
+    } | null;
   };
 
   manager?: {
@@ -31,8 +67,11 @@ type PossibleManager = {
   email: string;
 
   role?: {
+    id?: number;
     name: string;
-    level: number;
+    level?: number;
+    isAdmin?: boolean;
+    active?: boolean;
   };
 };
 
@@ -53,24 +92,50 @@ export default function EditUserPage() {
   // AUTH
   // -----------------------------------
 
-  const [authorized, setAuthorized] = useState(false);
-  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [authorized, setAuthorized] =
+    useState(false);
+
+  const [checkingAuth, setCheckingAuth] =
+    useState(true);
+
+  const [currentUser, setCurrentUser] =
+    useState<CurrentUser | null>(null);
 
   // -----------------------------------
   // USER
   // -----------------------------------
 
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] =
+    useState<User | null>(null);
 
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [name, setName] =
+    useState("");
+
+  const [email, setEmail] =
+    useState("");
+
+  const [password, setPassword] =
+    useState("");
+
+  const [active, setActive] =
+    useState(true);
+
+  // -----------------------------------
+  // ROLES
+  // -----------------------------------
+
+  const [roleId, setRoleId] =
+    useState("");
+
+  const [roles, setRoles] =
+    useState<Role[]>([]);
 
   // -----------------------------------
   // MANAGER
   // -----------------------------------
 
-  const [managerId, setManagerId] = useState("");
+  const [managerId, setManagerId] =
+    useState("");
 
   const [possibleManagers, setPossibleManagers] =
     useState<PossibleManager[]>([]);
@@ -82,29 +147,41 @@ export default function EditUserPage() {
   // STATE
   // -----------------------------------
 
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [loading, setLoading] =
+    useState(true);
+
+  const [saving, setSaving] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
 
   // -----------------------------------
-  // CHECK AUTH
+  // AUTH
   // -----------------------------------
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
+    const token =
+      localStorage.getItem("token");
 
     if (!token) {
       router.replace("/login");
       return;
     }
 
-    const currentUser =
+    const current =
       getUser() as CurrentUser | null;
 
-    const permissions =
-      currentUser?.permissions || [];
+    setCurrentUser(current);
 
-    if (!permissions.includes("users.update")) {
+    const permissions =
+      current?.permissions || [];
+
+    if (
+      !permissions.includes(
+        "users.update",
+      )
+    ) {
       router.replace("/dashboard");
       return;
     }
@@ -114,7 +191,7 @@ export default function EditUserPage() {
   }, [router]);
 
   // -----------------------------------
-  // LOAD USER
+  // LOAD USER + ROLES
   // -----------------------------------
 
   useEffect(() => {
@@ -122,31 +199,87 @@ export default function EditUserPage() {
       return;
     }
 
-    if (!userId || Number.isNaN(userId)) {
+    if (
+      !userId ||
+      Number.isNaN(userId)
+    ) {
       router.replace("/users");
       return;
     }
 
-    async function loadUser() {
+    async function loadData() {
       try {
         setLoading(true);
         setError("");
 
-        const response = await api.get(
-          `/users/${userId}`,
-        );
+        /*
+         * Only load the user and roles.
+         *
+         * The user's role already contains
+         * the group information, so there is
+         * no need to call GET /groups.
+         */
+        const [
+          userResponse,
+        ] = await Promise.all([
+          api.get<User>(
+            `/users/${userId}`,
+          ),
+        ]);
 
-        const loadedUser: User =
-          response.data;
+        const loadedUser =
+          userResponse.data;
 
         setUser(loadedUser);
 
-        setName(loadedUser.name);
-        setEmail(loadedUser.email);
+        const rolesResponse =
+        await api.get<{
+          data: Role[];
+          pagination: {
+            page: number;
+            limit: number;
+            total: number;
+            totalPages: number;
+          };
+        }>("/roles", {
+          params: {
+            page: 1,
+            limit: 100,
+          },
+        });
+
+      setRoles(rolesResponse.data.data);
+
+        setName(
+          loadedUser.name || "",
+        );
+
+        setEmail(
+          loadedUser.email || "",
+        );
+
+        setActive(
+          loadedUser.active,
+        );
+
+        if (
+          loadedUser.role?.id !==
+          undefined
+        ) {
+          setRoleId(
+            String(
+              loadedUser.role.id,
+            ),
+          );
+        } else {
+          setRoleId("");
+        }
 
         setManagerId(
           loadedUser.manager
-            ? String(loadedUser.manager.id)
+            ? String(
+                loadedUser.manager.id,
+              )
             : "",
         );
       } catch (err: any) {
@@ -156,44 +289,151 @@ export default function EditUserPage() {
         );
 
         if (
-          err?.response?.status === 401
+          err?.response?.status ===
+          401
         ) {
           router.replace("/login");
           return;
         }
 
         if (
-          err?.response?.status === 403
-        ) {
-          router.replace("/dashboard");
-          return;
-        }
-
-        if (
-          err?.response?.status === 404
+          err?.response?.status ===
+          404
         ) {
           router.replace("/users");
           return;
         }
 
-        setError(
-          err?.response?.data?.message ||
-            "Unable to load user.",
-        );
+        /*
+         * Do not redirect on 403 here.
+         *
+         * The backend is responsible for
+         * deciding whether this user can be
+         * managed. A 403 should be shown
+         * instead of silently redirecting.
+         */
+        const message =
+          err?.response?.data?.message;
+
+        if (Array.isArray(message)) {
+          setError(
+            message.join(", "),
+          );
+        } else {
+          setError(
+            message ||
+              "Unable to load user.",
+          );
+        }
       } finally {
         setLoading(false);
       }
     }
 
-    loadUser();
-  }, [authorized, userId, router]);
+    loadData();
+  }, [
+    authorized,
+    userId,
+    router,
+  ]);
+
+  // -----------------------------------
+  // FIND ROLE
+  // -----------------------------------
+
+  function getSelectedRole() {
+    if (roleId) {
+      return roles.find(
+        (role) =>
+          role.id ===
+          Number(roleId),
+      );
+    }
+
+    if (!user?.role) {
+      return undefined;
+    }
+
+    if (
+      user.role.id !==
+      undefined
+    ) {
+      return roles.find(
+        (role) =>
+          role.id ===
+          user.role?.id,
+      );
+    }
+
+    return roles.find(
+      (role) =>
+        role.name ===
+        user.role?.name,
+    );
+  }
+
+  // -----------------------------------
+  // FIND GROUP
+  // -----------------------------------
+
+  function getGroupName() {
+    const selectedRole =
+      getSelectedRole();
+
+    /*
+     * Group comes directly from the
+     * selected role returned by /roles.
+     */
+    if (selectedRole?.group?.name) {
+      return selectedRole.group.name;
+    }
+
+    /*
+     * Fallback to the user's current
+     * role group returned by /users/:id.
+     */
+    if (user?.role?.group?.name) {
+      return user.role.group.name;
+    }
+
+    return "Unassigned";
+  }
 
   // -----------------------------------
   // LOAD POSSIBLE MANAGERS
   // -----------------------------------
 
   useEffect(() => {
-    if (!authorized || !userId) {
+    if (
+      !authorized ||
+      !userId ||
+      !user ||
+      !roleId
+    ) {
+      setPossibleManagers([]);
+      setLoadingManagers(false);
+      return;
+    }
+
+    const selectedRole =
+      roles.find(
+        (role) =>
+          role.id ===
+          Number(roleId),
+      );
+
+    // -----------------------------------
+    // NO MANAGER REQUIRED
+    // -----------------------------------
+
+    if (
+      !selectedRole ||
+      selectedRole.isAdmin ||
+      selectedRole.reportsToRoleId ===
+        null
+    ) {
+      setPossibleManagers([]);
+      setLoadingManagers(false);
       return;
     }
 
@@ -202,39 +442,40 @@ export default function EditUserPage() {
 
       try {
         const response =
-          await api.get(
-            `/users/${userId}/possible-managers`,
+          await api.get<
+            PossibleManager[]
+          >(
+            `/users/possible-managers-for-role/${roleId}`,
           );
 
-        let managers: PossibleManager[] =
-          response.data;
-
         /*
-         * Keep the existing manager in the
-         * dropdown if the backend doesn't
-         * return them.
+         * The backend is the source of truth.
+         *
+         * Do not manually inject the old
+         * manager.
          */
+        const managers =
+  response.data;
 
-        if (
-          user?.manager &&
-          !managers.some(
-            (manager) =>
-              manager.id ===
-              user.manager?.id,
-          )
-        ) {
-          managers = [
-            {
-              id: user.manager.id,
-              name: user.manager.name,
-              email: "",
-              role: undefined,
-            },
-            ...managers,
-          ];
-        }
+            setPossibleManagers(
+              managers,
+            );
 
-        setPossibleManagers(managers);
+            /*
+            * If the current manager is no longer
+            * eligible, automatically clear the
+            * manager selection.
+            */
+            if (
+              managerId &&
+              !managers.some(
+                (manager) =>
+                  manager.id ===
+                  Number(managerId),
+              )
+            ) {
+              setManagerId("");
+            }
       } catch (err: any) {
         console.error(
           "Unable to load possible managers:",
@@ -251,11 +492,13 @@ export default function EditUserPage() {
   }, [
     authorized,
     userId,
-    user?.manager,
+    user,
+    roleId,
+    roles,
   ]);
 
   // -----------------------------------
-  // SAVE USER
+  // SAVE
   // -----------------------------------
 
   async function saveUser(
@@ -269,43 +512,119 @@ export default function EditUserPage() {
 
     setError("");
 
+    // -----------------------------------
+    // VALIDATION
+    // -----------------------------------
+
     if (!name.trim()) {
-      setError("Name is required.");
+      alert(
+        "Full name is required.",
+      );
       return;
     }
 
     if (!email.trim()) {
-      setError("Email is required.");
+      alert(
+        "Email address is required.",
+      );
+      return;
+    }
+
+    if (!roleId) {
+      alert(
+        "Role is required.",
+      );
+      return;
+    }
+
+    if (
+      !/^\S+@\S+\.\S+$/.test(
+        email.trim(),
+      )
+    ) {
+      alert(
+        "Enter a valid email address.",
+      );
+      return;
+    }
+
+    if (
+      password.trim() &&
+      password.length < 6
+    ) {
+      alert(
+        "New password must be at least 6 characters.",
+      );
+      return;
+    }
+
+    const selectedRole =
+      roles.find(
+        (role) =>
+          role.id ===
+          Number(roleId),
+      );
+
+    if (!selectedRole) {
+      alert(
+        "Please select a valid role.",
+      );
       return;
     }
 
     setSaving(true);
 
     try {
+      // -----------------------------------
+      // UPDATE USER DETAILS
+      // -----------------------------------
+
       const data: {
         name: string;
         email: string;
         password?: string;
+        roleId: number;
         managerId?: number | null;
+        active: boolean;
       } = {
         name: name.trim(),
-        email: email.trim().toLowerCase(),
+
+        email: email
+          .trim()
+          .toLowerCase(),
+
+        roleId: Number(roleId),
+        active,
       };
 
       if (password.trim()) {
-        data.password = password;
+        data.password =
+          password;
       }
 
-      data.managerId = managerId
-        ? Number(managerId)
-        : null;
+      /*
+        * Only send a manager when the
+        * selected role actually requires one.
+        */
+        if (
+          !selectedRole.isAdmin &&
+          selectedRole.reportsToRoleId !== null
+        ) {
+          // Explicitly send null when Unassigned is selected.
+          data.managerId =
+            managerId === ""
+              ? null
+              : Number(managerId);
+        } else {
+          data.managerId = null;
+        }
 
       await api.patch(
         `/users/${userId}`,
         data,
       );
-
-      router.push("/users");
+      
+      router.replace("/users?success=updated");
     } catch (err: any) {
       console.error(
         "Unable to update user:",
@@ -315,10 +634,14 @@ export default function EditUserPage() {
       const message =
         err?.response?.data?.message;
 
-      if (Array.isArray(message)) {
-        setError(message.join(", "));
-      } else {
+      if (
+        Array.isArray(message)
+      ) {
         setError(
+          message.join(", "),
+        );
+      } else {
+        alert(
           message ||
             "Unable to update user.",
         );
@@ -332,7 +655,10 @@ export default function EditUserPage() {
   // LOADING
   // -----------------------------------
 
-  if (checkingAuth || loading) {
+  if (
+    checkingAuth ||
+    loading
+  ) {
     return (
       <DashboardLayout>
         <div className="page-loading">
@@ -348,335 +674,538 @@ export default function EditUserPage() {
   // SAFETY
   // -----------------------------------
 
-  if (!authorized || !user) {
+  if (
+    !authorized ||
+    !user
+  ) {
     return null;
   }
 
-    // -----------------------------------
+  const selectedRole =
+    getSelectedRole();
+
+  const roleName =
+    selectedRole?.name ||
+    user.role?.name ||
+    "No role";
+
+  const groupName =
+    getGroupName();
+
+  const currentManager =
+    managerId
+      ? possibleManagers.find(
+          (manager) =>
+            manager.id ===
+            Number(managerId),
+        )
+      : null;
+
+  // -----------------------------------
   // PAGE
   // -----------------------------------
 
   return (
     <DashboardLayout>
-      <div className="page-header">
-        <div>
-          <div className="page-eyebrow">
-            USER MANAGEMENT
-          </div>
+      <div className="company-users-page">
+        {/* -------------------------------- */}
+        {/* PAGE HEADER */}
+        {/* -------------------------------- */}
 
-          <h1>Edit user</h1>
-
-          <p>
-            Update {user.name}'s account
-            and reporting hierarchy.
-          </p>
-        </div>
-
-        <button
-          className="button button-secondary"
-          onClick={() =>
-            router.push("/users")
-          }
-          type="button"
-          disabled={saving}
-        >
-          ← Back to users
-        </button>
-      </div>
-
-      <div className="form-card">
-        <div className="form-card-header">
-          <div className="form-card-icon">
-            ✎
-          </div>
-
+        <div className="company-page-header">
           <div>
-            <h2>User information</h2>
+            <div className="company-page-eyebrow">
+              USER MANAGEMENT
+            </div>
+
+            <h1>
+              Edit User
+            </h1>
 
             <p>
-              Update the account details
-              and reporting hierarchy.
+              Update this user's
+              details.
             </p>
           </div>
-        </div>
 
-        <form
-          onSubmit={saveUser}
-          className="admin-form"
-        >
-          {error && (
-            <div className="alert-error">
-              {Array.isArray(error)
-                ? error.join(", ")
-                : error}
-            </div>
-          )}
-
-          {/* -------------------------------- */}
-          {/* NAME + EMAIL */}
-          {/* -------------------------------- */}
-
-          <div className="form-row">
-            <div className="form-group">
-              <label htmlFor="name">
-                Full name
-              </label>
-
-              <input
-                id="name"
-                type="text"
-                placeholder="e.g. Ahmed Khan"
-                value={name}
-                onChange={(e) =>
-                  setName(e.target.value)
-                }
-                disabled={saving}
-                required
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="email">
-                Email address
-              </label>
-
-              <input
-                id="email"
-                type="email"
-                placeholder="e.g. ahmed@company.com"
-                value={email}
-                onChange={(e) =>
-                  setEmail(e.target.value)
-                }
-                disabled={saving}
-                required
-              />
-            </div>
-          </div>
-
-          {/* -------------------------------- */}
-{/* PASSWORD */}
-{/* -------------------------------- */}
-
-<div className="edit-form-section">
-  <div className="form-group">
-    <label htmlFor="password">
-      New password
-    </label>
-
-    <input
-      id="password"
-      type="password"
-      placeholder="Leave blank to keep current password"
-      value={password}
-      onChange={(e) =>
-        setPassword(e.target.value)
-      }
-      disabled={saving}
-    />
-
-    <div className="field-help">
-      Leave blank if you do not want to
-      change the current password.
-    </div>
-  </div>
-</div>
-
-{/* -------------------------------- */}
-{/* ROLE */}
-{/* -------------------------------- */}
-
-<div className="edit-form-section">
-  <div className="form-group">
-    <label htmlFor="role">
-      Role
-    </label>
-
-    <div
-      id="role"
-      className="edit-role-display"
-    >
-      {user.role?.name || "No role"}
-    </div>
-
-    <div className="field-help">
-      The user's role is managed separately
-      and cannot be changed from this page.
-    </div>
-  </div>
-</div>
-
-{/* -------------------------------- */}
-{/* REPORTS TO */}
-{/* -------------------------------- */}
-
-<div className="edit-form-section">
-  <div className="form-group">
-    <label htmlFor="manager">
-      Reports To
-    </label>
-
-    {loadingManagers ? (
-      <div className="form-input edit-loading">
-        Loading managers...
-      </div>
-    ) : (
-      <select
-        id="manager"
-        className="form-input edit-manager-select"
-        value={managerId}
-        onChange={(e) =>
-          setManagerId(e.target.value)
-        }
-        disabled={saving}
-      >
-        <option value="">
-          Top level
-        </option>
-
-        {possibleManagers.map((manager) => (
-          <option
-            key={manager.id}
-            value={manager.id}
-          >
-            {manager.name} —{" "}
-            {manager.role?.name || "Manager"}
-          </option>
-        ))}
-      </select>
-    )}
-
-    <div className="field-help">
-      Select who this user reports to.
-      Leave as Top level if they do not
-      report to another user.
-    </div>
-  </div>
-</div>
-
-{/* -------------------------------- */}
-{/* HIERARCHY */}
-{/* -------------------------------- */}
-
-<div className="edit-form-section">
-  <div className="hierarchy-preview">
-
-    <div className="hierarchy-preview-header">
-      <div>
-        <div className="hierarchy-preview-title">
-          Current hierarchy
-        </div>
-
-        <div className="hierarchy-preview-subtitle">
-          Reporting relationship for this user
-        </div>
-      </div>
-    </div>
-
-    <div className="hierarchy-preview-body">
-
-      <div className="hierarchy-person">
-        <div className="hierarchy-avatar">
-          {user.name
-            .charAt(0)
-            .toUpperCase()}
-        </div>
-
-        <div className="hierarchy-person-info">
-          <div className="hierarchy-person-name">
-            {user.name}
-          </div>
-
-          <div className="hierarchy-person-role">
-            {user.role?.name || "No role"}
-          </div>
-        </div>
-      </div>
-
-      <div className="hierarchy-arrow">
-        →
-      </div>
-
-      <div className="hierarchy-person">
-        <div className="hierarchy-avatar">
-          {managerId
-            ? (
-                possibleManagers.find(
-                  (manager) =>
-                    manager.id ===
-                    Number(managerId),
-                )?.name ||
-                user.manager?.name ||
-                "Manager"
-              )
-                .charAt(0)
-                .toUpperCase()
-            : "T"}
-        </div>
-
-        <div className="hierarchy-person-info">
-          <div className="hierarchy-person-name">
-            {managerId
-              ? (
-                  possibleManagers.find(
-                    (manager) =>
-                      manager.id ===
-                      Number(managerId),
-                  )?.name ||
-                  user.manager?.name ||
-                  "Selected manager"
-                )
-              : "Top level"}
-          </div>
-
-          <div className="hierarchy-person-role">
-            {managerId
-              ? (
-                  possibleManagers.find(
-                    (manager) =>
-                      manager.id ===
-                      Number(managerId),
-                  )?.role?.name ||
-                  "Manager"
-                )
-              : "No manager"}
-          </div>
-        </div>
-      </div>
-
-    </div>
-  </div>
-</div>
-          {/* -------------------------------- */}
-          {/* ACTIONS */}
-          {/* -------------------------------- */}
-
-          <div className="form-actions">
+          <div className="company-page-actions">
             <button
               type="button"
-              className="button button-secondary"
+              className="company-secondary-button"
               onClick={() =>
-                router.push("/users")
+                router.push(
+                  "/users",
+                )
               }
               disabled={saving}
             >
-              Cancel
-            </button>
-
-            <button
-              type="submit"
-              className="button button-primary"
-              disabled={
-                saving ||
-                loadingManagers
-              }
-            >
-              {saving
-                ? "Saving..."
-                : "Save changes"}
+              ← Back
             </button>
           </div>
-        </form>
+        </div>
+
+        {/* -------------------------------- */}
+        {/* FORM */}
+        {/* -------------------------------- */}
+
+        <div className="company-user-view-panel">
+          <div className="company-user-information">
+            <h3>
+              User Information
+            </h3>
+
+            <form
+              onSubmit={saveUser}
+              className="company-create-user-form"
+            >
+              {error && (
+                <div className="company-users-error">
+                  {error}
+                </div>
+              )}
+
+              {/* NAME + EMAIL */}
+
+              <div className="company-create-form-grid">
+                <div className="company-create-form-group">
+                  <label htmlFor="name">
+                    Full Name
+                  </label>
+
+                  <input
+                    id="name"
+                    type="text"
+                    placeholder="e.g. Ahmed Khan"
+                    value={name}
+                    onChange={(e) =>
+                      setName(
+                        e.target.value,
+                      )
+                    }
+                    disabled={saving}
+                    required
+                  />
+                </div>
+
+                <div className="company-create-form-group">
+                  <label htmlFor="email">
+                    Email Address
+                  </label>
+
+                  <input
+                    id="email"
+                    type="email"
+                    placeholder="e.g. ahmed@company.com"
+                    value={email}
+                    onChange={(e) =>
+                      setEmail(
+                        e.target.value,
+                      )
+                    }
+                    disabled={saving}
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* PASSWORD + STATUS */}
+
+              <div className="company-create-form-grid">
+                <div className="company-create-form-group">
+                  <label htmlFor="password">
+                    New Password
+                  </label>
+
+                  <input
+                    id="password"
+                    type="password"
+                    placeholder="Leave blank to keep current password"
+                    value={password}
+                    onChange={(e) =>
+                      setPassword(
+                        e.target.value,
+                      )
+                    }
+                    disabled={saving}
+                  />
+
+                  <span className="company-create-form-help">
+                    Leave blank if you do not
+                    want to change the current
+                    password.
+                  </span>
+                </div>
+
+                <div className="company-create-form-group">
+                  <label htmlFor="user-status">
+                    User Status
+                  </label>
+
+                  <select
+                    id="user-status"
+                    value={
+                      active
+                        ? "active"
+                        : "inactive"
+                    }
+                    onChange={(e) =>
+                      setActive(
+                        e.target.value ===
+                          "active",
+                      )
+                    }
+                    disabled={saving}
+                  >
+                    <option value="active">
+                      Active
+                    </option>
+
+                    <option value="inactive">
+                      Inactive
+                    </option>
+                  </select>
+
+                  <span className="company-create-form-help">
+                    This controls the user's
+                    account status independently
+                    from their role status.
+                  </span>
+                </div>
+              </div>
+
+              {/* ROLE + GROUP */}
+
+              <div className="company-create-form-grid">
+                <div className="company-create-form-group">
+                  <label htmlFor="role">
+                    Role
+                  </label>
+
+                  <select
+                    id="role"
+                    value={roleId}
+                    onChange={(e) => {
+                      const newRoleId =
+                        e.target.value;
+
+                      setRoleId(
+                        newRoleId,
+                      );
+
+                      /*
+                       * The old manager may no
+                       * longer be valid for the
+                       * newly selected role.
+                       */
+                      setManagerId("");
+
+                      setPossibleManagers(
+                        [],
+                      );
+                    }}
+                    disabled={saving}
+                    required
+                  >
+                    <option value="">
+                      Select a role
+                    </option>
+
+                    {roles
+                      .filter(
+                        (role) =>
+                          role.active &&
+                          !role.isAdmin,
+                      )
+                      .map(
+                        (role) => (
+                          <option
+                            key={
+                              role.id
+                            }
+                            value={
+                              role.id
+                            }
+                          >
+                            {role.name}
+                          </option>
+                        ),
+                      )}
+                  </select>
+
+                  <span className="company-create-form-help">
+                    Select the role assigned
+                    to this user.
+                  </span>
+                </div>
+
+                <div className="company-create-form-group">
+                  <label>
+                    Group
+                  </label>
+
+                  <div className="company-create-form-readonly company-create-group-field">
+                    <span>
+                      {groupName}
+                    </span>
+
+                    <span className="company-create-group-badge">
+                      From selected role
+                    </span>
+                  </div>
+
+                  <span className="company-create-form-help">
+                    Group is determined by the
+                    user's role.
+                  </span>
+                </div>
+              </div>
+
+              {/* REPORTING ROLE + REPORTS TO */}
+
+              <div className="company-create-form-grid">
+                <div className="company-create-form-group">
+                  <label>
+                    Reporting Role
+                  </label>
+
+                  <div className="company-create-form-readonly">
+                    {selectedRole
+                      ?.reportsToRole
+                      ?.name ||
+                      "No reporting role"}
+                  </div>
+
+                  <span className="company-create-form-help">
+                    This is determined by the
+                    selected role.
+                  </span>
+                </div>
+
+                {selectedRole &&
+                  !selectedRole.isAdmin &&
+                  selectedRole
+                    .reportsToRoleId !==
+                    null && (
+                    <div className="company-create-form-group">
+                      <label htmlFor="manager">
+                        Reports To
+                      </label>
+
+                      {loadingManagers ? (
+                        <div className="company-create-form-readonly">
+                          Loading managers...
+                        </div>
+                      ) : (
+                        <select
+                          id="manager"
+                          value={managerId}
+                          onChange={(e) =>
+                            setManagerId(
+                              e.target
+                                .value,
+                            )
+                          }
+                          disabled={
+                            saving
+                          }
+                        >
+                          <option value="">
+                            Unassigned
+                          </option>
+
+                          {possibleManagers.map(
+                            (
+                              manager,
+                            ) => (
+                              <option
+                                key={
+                                  manager.id
+                                }
+                                value={
+                                  manager.id
+                                }
+                              >
+                                {
+                                  manager.name
+                                }{" "}
+                                —{" "}
+                                {manager
+                                  .role
+                                  ?.name ||
+                                  "Manager"}
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      )}
+
+                      <span className="company-create-form-help">
+                        Only active users with
+                        the role required by{" "}
+                        <strong>
+                          {
+                            selectedRole.name
+                          }
+                        </strong>{" "}
+                        are shown.
+                      </span>
+                    </div>
+                  )}
+
+                {selectedRole &&
+                  (selectedRole.isAdmin ||
+                    selectedRole
+                      .reportsToRoleId ===
+                      null) && (
+                    <div className="company-create-form-group">
+                      <label>
+                        Reports To
+                      </label>
+
+                      <div className="company-create-form-readonly">
+                        {selectedRole.isAdmin
+                          ? "No manager"
+                          : "No reporting role"}
+                      </div>
+
+                      <span className="company-create-form-help">
+                        {selectedRole.isAdmin
+                          ? "Administrator users do not report to another user."
+                          : "This role does not require a reporting manager."}
+                      </span>
+                    </div>
+                  )}
+              </div>
+
+              {/* ADMIN INFO */}
+
+              {selectedRole?.isAdmin && (
+                <div className="company-create-info-box">
+                  <strong>
+                    Administrator role
+                  </strong>
+
+                  <span>
+                    Administrator users do not
+                    report to another user.
+                  </span>
+                </div>
+              )}
+
+              {/* HIERARCHY */}
+
+              <div className="company-create-full-width">
+                <div className="hierarchy-preview">
+                  <div className="hierarchy-preview-header">
+                    <div>
+                      <div className="hierarchy-preview-title">
+                        Current hierarchy
+                      </div>
+
+                      <div className="hierarchy-preview-subtitle">
+                        Reporting relationship for
+                        this user
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="hierarchy-preview-body">
+                    <div className="hierarchy-person">
+                      <div className="hierarchy-avatar">
+                        {user.name
+                          .charAt(0)
+                          .toUpperCase()}
+                      </div>
+
+                      <div className="hierarchy-person-info">
+                        <div className="hierarchy-person-name">
+                          {user.name}
+                        </div>
+
+                        <div className="hierarchy-person-role">
+                          {roleName}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="hierarchy-arrow">
+                      →
+                    </div>
+
+                    <div className="hierarchy-person">
+                      <div className="hierarchy-avatar">
+                        {managerId
+                          ? (
+                              currentManager
+                                ?.name ||
+                              user.manager
+                                ?.name ||
+                              "Manager"
+                            )
+                              .charAt(
+                                0,
+                              )
+                              .toUpperCase()
+                          : "U"}
+                      </div>
+
+                      <div className="hierarchy-person-info">
+                        <div className="hierarchy-person-name">
+                          {managerId
+                            ? currentManager
+                                ?.name ||
+                              user.manager
+                                ?.name ||
+                              "Selected manager"
+                            : "Unassigned"}
+                        </div>
+
+                        <div className="hierarchy-person-role">
+                          {managerId
+                            ? currentManager
+                                ?.role
+                                ?.name ||
+                              "Manager"
+                            : "Manager not currently assigned"}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ACTIONS */}
+
+              <div className="company-create-form-actions">
+                <button
+                  type="button"
+                  className="company-secondary-button"
+                  onClick={() =>
+                    router.push(
+                      "/users",
+                    )
+                  }
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="company-primary-button"
+                  disabled={
+                    saving ||
+                    loadingManagers
+                  }
+                >
+                  {saving
+                    ? "Saving..."
+                    : "Save Changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       </div>
     </DashboardLayout>
   );

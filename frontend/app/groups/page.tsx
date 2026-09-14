@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import {
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
 
 import { api } from "@/lib/api";
-import {logout } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
+import ConfirmModal from "@/components/ConfirmModal";
 
 type Permission = {
   id: number;
@@ -17,12 +20,29 @@ type GroupPermission = {
   permission: Permission;
 };
 
+type GroupRole = {
+  id: number;
+  name?: string;
+};
+
 type Group = {
   id: number;
   name: string;
   active: boolean;
   permissions: GroupPermission[];
-  roles: any[];
+  roles: GroupRole[];
+};
+
+type Pagination = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+};
+
+type GroupsResponse = {
+  data: Group[];
+  pagination: Pagination;
 };
 
 export default function GroupsPage() {
@@ -30,12 +50,26 @@ export default function GroupsPage() {
   const searchParams = useSearchParams();
 
   const [groups, setGroups] = useState<Group[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
 
-  // -----------------------------------
-  // SUCCESS MESSAGE
-  // -----------------------------------
+  const [loading, setLoading] = useState(true);
+  const [pageLoading, setPageLoading] = useState(false);
+
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+
+  const [deleteTarget, setDeleteTarget] =
+    useState<Group | null>(null);
+
+  const [deleteLoading, setDeleteLoading] =
+    useState(false);
+
+  const [pagination, setPagination] =
+    useState<Pagination>({
+      page: 1,
+      limit: 10,
+      total: 0,
+      totalPages: 0,
+    });
 
   const success = searchParams.get("success");
 
@@ -43,18 +77,72 @@ export default function GroupsPage() {
   // LOAD GROUPS
   // -----------------------------------
 
+  async function loadGroups(
+    page: number,
+    showInitialLoading = false,
+  ) {
+    try {
+      if (showInitialLoading) {
+        setLoading(true);
+      } else {
+        setPageLoading(true);
+      }
+
+      setError("");
+
+      const response =
+        await api.get<GroupsResponse>(
+          "/groups",
+          {
+            params: {
+              page,
+              limit: 10,
+            },
+          },
+        );
+
+      setGroups(response.data.data);
+
+      setPagination(
+        response.data.pagination,
+      );
+    } catch (err: any) {
+      if (err?.response?.status === 401) {
+        router.replace("/login");
+        return;
+      }
+
+      setError(
+        err?.response?.data?.message ||
+          "Unable to load groups.",
+      );
+    } finally {
+      if (showInitialLoading) {
+        setLoading(false);
+      } else {
+        setPageLoading(false);
+      }
+    }
+  }
+
+  // -----------------------------------
+  // INITIAL LOAD
+  // -----------------------------------
+
   useEffect(() => {
-    const token = localStorage.getItem("token");
+    const token =
+      localStorage.getItem("token");
 
     if (!token) {
       router.replace("/login");
       return;
     }
-    loadGroups();
-  }, []);
+
+    loadGroups(1, true);
+  }, [router]);
 
   // -----------------------------------
-  // HANDLE SUCCESS MESSAGE
+  // URL SUCCESS MESSAGE
   // -----------------------------------
 
   useEffect(() => {
@@ -70,88 +158,6 @@ export default function GroupsPage() {
       clearTimeout(timer);
     };
   }, [success, router]);
-
-  // -----------------------------------
-  // LOAD GROUPS
-  // -----------------------------------
-
-  async function loadGroups() {
-    try {
-      setLoading(true);
-      setError("");
-
-      const response = await api.get("/groups");
-
-      setGroups(response.data);
-    } catch (err: any) {
-      setError(
-        err?.response?.data?.message ||
-          "Unable to load groups.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // -----------------------------------
-  // DELETE GROUP
-  // -----------------------------------
-
-  async function deleteGroup(group: Group) {
-    const confirmed = window.confirm(
-      `Delete "${group.name}"? This cannot be undone.`,
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      setError("");
-
-      await api.delete(`/groups/${group.id}`);
-
-      await loadGroups();
-
-      router.replace(
-        "/groups?success=deleted",
-      );
-    } catch (err: any) {
-      setError(
-        err?.response?.data?.message ||
-          "Unable to delete group.",
-      );
-    }
-  }
-
-  // -----------------------------------
-  // TOGGLE GROUP STATUS
-  // -----------------------------------
-
-  async function toggleGroup(group: Group) {
-    try {
-      setError("");
-
-      await api.patch(
-        `/groups/${group.id}/status`,
-      );
-
-      await loadGroups();
-
-      router.replace(
-        `/groups?success=${
-          group.active
-            ? "deactivated"
-            : "activated"
-        }`,
-      );
-    } catch (err: any) {
-      setError(
-        err?.response?.data?.message ||
-          "Unable to update group status.",
-      );
-    }
-  }
 
   // -----------------------------------
   // SUCCESS MESSAGE TEXT
@@ -180,18 +186,219 @@ export default function GroupsPage() {
   }
 
   // -----------------------------------
+  // CHANGE PAGE
+  // -----------------------------------
+
+  async function changePage(
+    nextPage: number,
+  ) {
+    if (
+      nextPage < 1 ||
+      nextPage > pagination.totalPages ||
+      nextPage === pagination.page ||
+      pageLoading
+    ) {
+      return;
+    }
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+
+    await loadGroups(nextPage);
+  }
+
+  // -----------------------------------
+  // SEARCH
+  // -----------------------------------
+
+  const filteredGroups = useMemo(() => {
+    const query =
+      search.toLowerCase().trim();
+
+    if (!query) {
+      return groups;
+    }
+
+    return groups.filter((group) => {
+      const permissionNames =
+        group.permissions
+          ?.map(
+            ({ permission }) =>
+              permission.name,
+          )
+          .join(" ") || "";
+
+      const roleNames =
+        group.roles
+          ?.map(
+            (role) => role.name || "",
+          )
+          .join(" ") || "";
+
+      return [
+        group.name,
+        permissionNames,
+        roleNames,
+        group.active
+          ? "active"
+          : "inactive",
+      ]
+        .filter(Boolean)
+        .some((value) =>
+          value
+            .toLowerCase()
+            .includes(query),
+        );
+    });
+  }, [groups, search]);
+
+  // -----------------------------------
+  // DELETE GROUP
+  // -----------------------------------
+
+  function deleteGroup(group: Group) {
+    setError("");
+    setDeleteTarget(group);
+  }
+
+  // -----------------------------------
+  // CONFIRM DELETE GROUP
+  // -----------------------------------
+
+  async function confirmDeleteGroup() {
+    if (!deleteTarget) {
+      return;
+    }
+
+    try {
+      setDeleteLoading(true);
+      setError("");
+
+      await api.delete(
+        `/groups/${deleteTarget.id}`,
+      );
+
+      setDeleteTarget(null);
+
+      const currentPage =
+        pagination.page;
+
+      const currentPageItemCount =
+        groups.length;
+
+      const isLastItemOnPage =
+        currentPageItemCount === 1 &&
+        currentPage > 1;
+
+      const nextPage =
+        isLastItemOnPage
+          ? currentPage - 1
+          : currentPage;
+
+      await loadGroups(nextPage);
+
+      router.replace(
+        "/groups?success=deleted",
+      );
+    } catch (err: any) {
+      if (err?.response?.status === 401) {
+        router.replace("/login");
+        return;
+      }
+
+      setError(
+        err?.response?.data?.message ||
+          "Unable to delete group.",
+      );
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
+
+  // -----------------------------------
+  // TOGGLE GROUP STATUS
+  // -----------------------------------
+
+  async function toggleGroup(
+    group: Group,
+  ) {
+    try {
+      setError("");
+
+      const newActiveStatus =
+        !group.active;
+
+      await api.patch(
+        `/groups/${group.id}/status`,
+      );
+
+      setGroups((currentGroups) =>
+        currentGroups.map((item) =>
+          item.id === group.id
+            ? {
+                ...item,
+                active:
+                  newActiveStatus,
+              }
+            : item,
+        ),
+      );
+
+      router.replace(
+        `/groups?success=${
+          newActiveStatus
+            ? "activated"
+            : "deactivated"
+        }`,
+      );
+    } catch (err: any) {
+      if (err?.response?.status === 401) {
+        router.replace("/login");
+        return;
+      }
+
+      setError(
+        err?.response?.data?.message ||
+          "Unable to update group status.",
+      );
+    }
+  }
+
+  // -----------------------------------
   // COUNTS
   // -----------------------------------
 
-  const totalGroups = groups.length;
+  const totalGroups =
+    pagination.total;
 
   const activeGroups = groups.filter(
     (group) => group.active,
   ).length;
 
-  const inactiveGroups = groups.filter(
-    (group) => !group.active,
-  ).length;
+  const inactiveGroups =
+    groups.filter(
+      (group) => !group.active,
+    ).length;
+
+  // -----------------------------------
+  // CURRENT PAGE RANGE
+  // -----------------------------------
+
+  const currentPageStart =
+    pagination.total === 0
+      ? 0
+      : (pagination.page - 1) *
+          pagination.limit +
+        1;
+
+  const currentPageEnd =
+    Math.min(
+      pagination.page *
+        pagination.limit,
+      pagination.total,
+    );
 
   // -----------------------------------
   // LOADING
@@ -200,8 +407,12 @@ export default function GroupsPage() {
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="page-loading">
-          Loading groups...
+        <div className="company-page-loading">
+          <div className="company-loading-spinner" />
+
+          <span>
+            Loading groups...
+          </span>
         </div>
       </DashboardLayout>
     );
@@ -213,19 +424,21 @@ export default function GroupsPage() {
 
   return (
     <DashboardLayout>
-      <div className="groups-page">
+      <div className="company-groups-page">
 
         {/* -------------------------------- */}
-        {/* HEADER */}
+        {/* PAGE HEADER */}
         {/* -------------------------------- */}
 
-        <div className="page-header">
+        <div className="company-page-header">
           <div>
-            <div className="page-eyebrow">
-              GROUP MANAGEMENT 
+            <div className="company-page-eyebrow">
+              GROUP MANAGEMENT
             </div>
 
-            <h1>Groups</h1>
+            <h1>
+              Groups
+            </h1>
 
             <p>
               Manage application groups and
@@ -233,24 +446,22 @@ export default function GroupsPage() {
             </p>
           </div>
 
-          <div className="page-header-actions">
-
+          <div className="company-page-actions">
             <button
-              className="button button-primary"
+              type="button"
+              className="company-primary-button"
               onClick={() =>
                 router.push(
                   "/groups/create",
                 )
               }
             >
-              + Create group
+              <span className="company-button-plus">
+                +
+              </span>
+
+              Add Group
             </button>
-              <button
-            className="button button-secondary"
-            onClick={logout}
-          >
-            Logout
-          </button>
           </div>
         </div>
 
@@ -258,148 +469,210 @@ export default function GroupsPage() {
         {/* SUCCESS */}
         {/* -------------------------------- */}
 
-        {success && getSuccessMessage() && (
-          <div className="groups-alert groups-alert-success">
-            ✓ {getSuccessMessage()}
-          </div>
-        )}
+        {success &&
+          getSuccessMessage() && (
+            <div className="company-users-success">
+              ✓ {getSuccessMessage()}
+            </div>
+          )}
 
         {/* -------------------------------- */}
         {/* ERROR */}
         {/* -------------------------------- */}
 
         {error && (
-          <div className="groups-alert groups-alert-error">
+          <div className="company-users-error">
             {Array.isArray(error)
               ? error.join(", ")
               : error}
           </div>
         )}
 
-        {/* GROUP STATS */}
-
-<div className="stats-grid">
-
-  {/* TOTAL */}
-
-  <div className="stat-card stat-card-total">
-    <div className="stat-card-content">
-      <span className="stat-card-label">
-        Total
-      </span>
-
-      <strong className="stat-card-value">
-        {groups.length}
-      </strong>
-
-      <span className="stat-card-description">
-        Total groups
-      </span>
-    </div>
-  </div>
-
-  {/* ACTIVE */}
-
-  <div className="stat-card stat-card-active">
-    <div className="stat-card-content">
-      <span className="stat-card-label">
-        Active
-      </span>
-
-      <strong className="stat-card-value">
-        {
-          groups.filter(
-            (group) => group.active,
-          ).length
-        }
-      </strong>
-
-      <span className="stat-card-description">
-        Available groups
-      </span>
-    </div>
-  </div>
-
-  {/* INACTIVE */}
-
-  <div className="stat-card stat-card-inactive">
-    <div className="stat-card-content">
-      <span className="stat-card-label">
-        Inactive
-      </span>
-
-      <strong className="stat-card-value">
-        {
-          groups.filter(
-            (group) => !group.active,
-          ).length
-        }
-      </strong>
-
-      <span className="stat-card-description">
-        Disabled groups
-      </span>
-    </div>
-  </div>
-
-</div>
-
         {/* -------------------------------- */}
-        {/* EXISTING GROUPS */}
+        {/* GROUP STATISTICS */}
         {/* -------------------------------- */}
 
-        <div className="content-card">
+        <div className="company-user-stats">
 
-          <div
-            style={{
-              padding:
-                "20px 24px",
-              borderBottom:
-                "1px solid rgba(255,255,255,0.08)",
-            }}
-          >
-            <div className="page-eyebrow">
-              CONFIGURATION
+          {/* TOTAL */}
+
+          <div className="company-user-stat-card">
+            <div className="company-user-stat-icon company-user-stat-icon-blue">
+              ◉
             </div>
 
-            <h2>
-              Existing groups
-            </h2>
+            <div className="company-user-stat-content">
+              <span>
+                Total groups
+              </span>
 
-            <p>
-              Manage groups currently
-              available to your roles.
-            </p>
+              <strong>
+                {totalGroups}
+              </strong>
+
+              <small>
+                Groups configured in the system
+              </small>
+            </div>
           </div>
 
-          {/* EMPTY */}
+          {/* ACTIVE */}
 
-          {groups.length === 0 ? (
-            <div className="empty-state">
+          <div className="company-user-stat-card">
+            <div className="company-user-stat-icon company-user-stat-icon-green">
+              ✓
+            </div>
 
-              <div className="empty-icon">
+            <div className="company-user-stat-content">
+              <span>
+                Active groups
+              </span>
+
+              <strong>
+                {activeGroups}
+              </strong>
+
+              <small>
+                Currently available groups
+              </small>
+            </div>
+          </div>
+
+          {/* INACTIVE */}
+
+          <div className="company-user-stat-card">
+            <div className="company-user-stat-icon company-user-stat-icon-gold">
+              ○
+            </div>
+
+            <div className="company-user-stat-content">
+              <span>
+                Inactive groups
+              </span>
+
+              <strong>
+                {inactiveGroups}
+              </strong>
+
+              <small>
+                Currently disabled groups
+              </small>
+            </div>
+          </div>
+
+        </div>
+
+        {/* -------------------------------- */}
+        {/* GROUPS PANEL */}
+        {/* -------------------------------- */}
+
+        <div className="company-users-panel">
+
+          {/* PANEL HEADER */}
+
+          <div className="company-users-panel-header">
+            <div>
+              <div className="company-panel-eyebrow">
+                CONFIGURATION
+              </div>
+
+              <h2>
+                All groups
+              </h2>
+
+              <p>
+                {filteredGroups.length}{" "}
+                {filteredGroups.length ===
+                1
+                  ? "group"
+                  : "groups"}{" "}
+                found
+              </p>
+            </div>
+
+            <div className="company-users-search">
+              <span className="company-users-search-icon">
+                ⌕
+              </span>
+
+              <input
+                type="text"
+                placeholder="Search groups..."
+                value={search}
+                onChange={(event) =>
+                  setSearch(
+                    event.target.value,
+                  )
+                }
+              />
+
+              {search && (
+                <button
+                  type="button"
+                  className="company-users-search-clear"
+                  onClick={() =>
+                    setSearch("")
+                  }
+                  aria-label="Clear search"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* -------------------------------- */}
+          {/* PAGE LOADING */}
+          {/* -------------------------------- */}
+
+          {pageLoading ? (
+            <div className="company-page-loading">
+              <div className="company-loading-spinner" />
+
+              <span>
+                Loading groups...
+              </span>
+            </div>
+          ) : filteredGroups.length ===
+            0 ? (
+
+            /* -------------------------------- */
+            /* EMPTY */
+            /* -------------------------------- */
+
+            <div className="company-users-empty">
+
+              <div className="company-users-empty-icon">
                 ◉
               </div>
 
               <h3>
-                No groups configured
+                No groups found
               </h3>
 
               <p>
-                Create your first group
-                to get started.
+                {search
+                  ? "Try changing your search."
+                  : "Create your first group to get started."}
               </p>
 
-              <button
-                className="button button-primary"
-                onClick={() =>
-                  router.push(
-                    "/groups/create",
-                  )
-                }
-              >
-                Create group
-              </button>
+              {!search && (
+                <button
+                  type="button"
+                  className="company-primary-button"
+                  onClick={() =>
+                    router.push(
+                      "/groups/create",
+                    )
+                  }
+                >
+                  <span className="company-button-plus">
+                    +
+                  </span>
+
+                  Add Group
+                </button>
+              )}
 
             </div>
           ) : (
@@ -408,13 +681,11 @@ export default function GroupsPage() {
             /* TABLE */
             /* -------------------------------- */
 
-            <div className="table-wrapper">
-
-              <table className="users-table">
+            <div className="company-users-table-wrapper">
+              <table className="company-users-table">
 
                 <thead>
                   <tr>
-
                     <th>
                       GROUP
                     </th>
@@ -431,16 +702,14 @@ export default function GroupsPage() {
                       STATUS
                     </th>
 
-                    <th>
+                    <th className="company-actions-heading">
                       ACTIONS
                     </th>
-
                   </tr>
                 </thead>
 
                 <tbody>
-
-                  {groups.map(
+                  {filteredGroups.map(
                     (group) => (
                       <tr
                         key={
@@ -451,29 +720,30 @@ export default function GroupsPage() {
                         {/* GROUP */}
 
                         <td>
-                          <div className="user-cell">
+                          <div className="company-user-cell">
 
-                            <div className="user-avatar">
+                            <div className="company-user-avatar">
                               {group.name
-                                .charAt(
+                                ?.charAt(
                                   0,
                                 )
-                                .toUpperCase()}
+                                .toUpperCase() ||
+                                "G"}
                             </div>
 
-                            <div>
-
-                              <div className="user-name">
-                                {group.name}
+                            <div className="company-user-details">
+                              <div className="company-user-name">
+                                {
+                                  group.name
+                                }
                               </div>
 
-                              <div className="user-id">
+                              <div className="company-user-id">
                                 ID #
                                 {
                                   group.id
                                 }
                               </div>
-
                             </div>
 
                           </div>
@@ -482,155 +752,273 @@ export default function GroupsPage() {
                         {/* PERMISSIONS */}
 
                         <td>
-
-                          <div
-                            style={{
-                              display:
-                                "flex",
-                              flexWrap:
-                                "wrap",
-                              gap: "6px",
-                            }}
-                          >
-
-                            {group.permissions.map(
-                              ({
-                                permission,
-                              }) => (
-
-                                <span
-                                  key={
-                                    permission.id
-                                  }
-                                  className="group-permission-chip"
-                                >
-                                  {permission.name
-                                    .split(
-                                      ".",
-                                    )[0]
-                                    .replace(
-                                      /^./,
-                                      (
-                                        char,
-                                      ) =>
-                                        char.toUpperCase(),
-                                    )}
-                                </span>
-
-                              ),
-                            )}
-
-                          </div>
-
+                          {group.permissions
+                            ?.length ? (
+                            <div className="company-group-permissions">
+                              {group.permissions.map(
+                                ({
+                                  permission,
+                                }) => (
+                                  <span
+                                    key={
+                                      permission.id
+                                    }
+                                    className="company-group-permission-chip"
+                                  >
+                                    {permission.name
+                                      .split(
+                                        ".",
+                                      )[0]
+                                      .replace(
+                                        /^./,
+                                        (
+                                          char,
+                                        ) =>
+                                          char.toUpperCase(),
+                                      )}
+                                  </span>
+                                ),
+                              )}
+                            </div>
+                          ) : (
+                            <span className="company-group-no-permissions">
+                              No permissions
+                            </span>
+                          )}
                         </td>
 
                         {/* ROLES */}
 
                         <td>
-
-                          <span>
-                            {
-                              group
-                                .roles
-                                .length
-                            }{" "}
+                          <span className="company-role-badge company-role-badge-blue">
+                            {group.roles?.length ||
+                              0}{" "}
                             {group.roles
-                              .length ===
+                              ?.length ===
                             1
                               ? "role"
                               : "roles"}
                           </span>
-
                         </td>
 
                         {/* STATUS */}
 
                         <td>
+                          {group.active ? (
+                            <span className="company-status-badge company-status-active">
+                              <span className="company-status-dot" />
 
-                          <span
-                            className={`group-status ${
-                              group.active
-                                ? "group-status-active"
-                                : "group-status-inactive"
-                            }`}
-                          >
+                              <span>
+                                Active
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="company-status-badge company-status-inactive">
+                              <span className="company-status-dot" />
 
-                            <span />
-
-                            {group.active
-                              ? "Active"
-                              : "Inactive"}
-
-                          </span>
-
+                              <span>
+                                Inactive
+                              </span>
+                            </span>
+                          )}
                         </td>
 
                         {/* ACTIONS */}
 
                         <td>
+                          <div className="company-user-actions">
 
-                          <div className="user-actions">
+                            {/* VIEW */}
+
+                            <button
+                              type="button"
+                              className="company-icon-button company-icon-view"
+                              onClick={() =>
+                                router.push(
+                                  `/groups/${group.id}`,
+                                )
+                              }
+                              title="View"
+                              aria-label={`View ${group.name}`}
+                            >
+                              ◉
+                            </button>
 
                             {/* EDIT */}
 
                             <button
-                              className="edit-button"
+                              type="button"
+                              className="company-icon-button company-icon-edit"
                               onClick={() =>
                                 router.push(
                                   `/groups/${group.id}/edit`,
                                 )
                               }
+                              title="Edit"
+                              aria-label={`Edit ${group.name}`}
                             >
-                              Edit
+                              ✎
                             </button>
 
                             {/* STATUS */}
 
                             <button
-                              className="edit-button"
+                              type="button"
+                              className={`company-icon-button ${
+                                group.active
+                                  ? "company-icon-status"
+                                  : "company-icon-status-inactive"
+                              }`}
                               onClick={() =>
                                 toggleGroup(
                                   group,
                                 )
                               }
+                              title={
+                                group.active
+                                  ? "Deactivate"
+                                  : "Activate"
+                              }
+                              aria-label={
+                                group.active
+                                  ? `Deactivate ${group.name}`
+                                  : `Activate ${group.name}`
+                              }
                             >
                               {group.active
-                                ? "Deactivate"
-                                : "Activate"}
+                                ? "●"
+                                : "○"}
                             </button>
 
                             {/* DELETE */}
 
                             <button
-                              className="delete-button"
+                              type="button"
+                              className="company-icon-button company-icon-delete"
                               onClick={() =>
                                 deleteGroup(
                                   group,
                                 )
                               }
+                              title="Delete"
+                              aria-label={`Delete ${group.name}`}
                             >
-                              Delete
+                              ×
                             </button>
 
                           </div>
-
                         </td>
 
                       </tr>
                     ),
                   )}
-
                 </tbody>
 
               </table>
-
             </div>
+          )}
 
+          {/* -------------------------------- */}
+          {/* PAGINATION FOOTER */}
+          {/* -------------------------------- */}
+
+          {pagination.total > 0 && (
+            <div className="company-logs-pagination">
+
+              <div className="company-logs-pagination-info">
+                Showing{" "}
+                <strong>
+                  {currentPageStart}
+                </strong>{" "}
+                –{" "}
+                <strong>
+                  {currentPageEnd}
+                </strong>{" "}
+                of{" "}
+                <strong>
+                  {pagination.total}
+                </strong>{" "}
+                groups
+              </div>
+
+              <div className="company-logs-pagination-controls">
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    changePage(
+                      pagination.page - 1,
+                    )
+                  }
+                  disabled={
+                    pagination.page <= 1 ||
+                    pageLoading
+                  }
+                  aria-label="Previous page"
+                >
+                  ‹
+                </button>
+
+                <span>
+                  Page{" "}
+                  <strong>
+                    {pagination.page}
+                  </strong>{" "}
+                  of{" "}
+                  <strong>
+                    {pagination.totalPages}
+                  </strong>
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    changePage(
+                      pagination.page + 1,
+                    )
+                  }
+                  disabled={
+                    pagination.page >=
+                      pagination.totalPages ||
+                    pageLoading
+                  }
+                  aria-label="Next page"
+                >
+                  ›
+                </button>
+
+              </div>
+            </div>
           )}
 
         </div>
-
       </div>
+
+      {/* -------------------------------- */}
+      {/* DELETE GROUP CONFIRMATION */}
+      {/* -------------------------------- */}
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        title="Delete Group?"
+        description={
+          <>
+            Are you sure you want to delete{" "}
+            <strong>
+              {deleteTarget?.name}
+            </strong>
+            ? This action cannot be undone.
+          </>
+        }
+        confirmLabel="Delete Group"
+        onConfirm={confirmDeleteGroup}
+        onCancel={() => {
+          if (!deleteLoading) {
+            setDeleteTarget(null);
+          }
+        }}
+        loading={deleteLoading}
+      />
     </DashboardLayout>
   );
 }

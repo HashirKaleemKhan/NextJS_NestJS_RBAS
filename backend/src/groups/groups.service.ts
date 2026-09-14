@@ -3,43 +3,89 @@ import {
   ConflictException,
   NotFoundException,
 } from "@nestjs/common";
+
 import { UpdateGroupDto } from "./dto/update-group.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateGroupDto } from "./dto/create-group.dto";
+
+import { AuditLogsService } from "../audit-logs/audit-logs.service";
+import { AuditAction } from "../audit-logs/audit-actions";
 
 @Injectable()
 export class GroupsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly auditLogsService: AuditLogsService,
   ) {}
 
   // -----------------------------------
   // GET GROUPS
   // -----------------------------------
 
-  findAll() {
-    return this.prisma.group.findMany({
-      orderBy: {
-        name: "asc",
-      },
+  async findAll(
+  page = 1,
+  limit = 10,
+) {
+  const safePage = Math.max(
+    1,
+    Number(page) || 1,
+  );
 
-      include: {
-        permissions: {
-          include: {
-            permission: true,
-          },
+  const safeLimit = Math.min(
+    100,
+    Math.max(1, Number(limit) || 10),
+  );
+
+  const skip =
+    (safePage - 1) * safeLimit;
+
+  const [groups, total] =
+    await Promise.all([
+      this.prisma.group.findMany({
+        skip,
+        take: safeLimit,
+
+        orderBy: {
+          name: "asc",
         },
 
-        roles: true,
-      },
-    });
-  }
+        include: {
+          permissions: {
+            include: {
+              permission: true,
+            },
+          },
+
+          roles: true,
+        },
+      }),
+
+      this.prisma.group.count(),
+    ]);
+
+  return {
+    data: groups,
+
+    pagination: {
+      page: safePage,
+      limit: safeLimit,
+      total,
+      totalPages: Math.ceil(
+        total / safeLimit,
+      ),
+    },
+  };
+}
 
   // -----------------------------------
   // CREATE GROUP
   // -----------------------------------
 
-  async create(dto: CreateGroupDto) {
+  async create(
+    dto: CreateGroupDto,
+    currentUserId: number,
+    req: any,
+  ) {
     const existingGroup =
       await this.prisma.group.findUnique({
         where: {
@@ -66,60 +112,94 @@ export class GroupsService {
     // -----------------------------------
 
     if (
-  dto.permissionIds &&
-  dto.permissionIds.length > 0
-) {
-  const permissions =
-    await this.prisma.permission.findMany({
-      where: {
-        id: {
-          in: dto.permissionIds,
-        },
-
-        // Groups can only contain
-        // parent permissions.
-        parentId: null,
-      },
-
-      select: {
-        id: true,
-      },
-    });
-
-  if (
-    permissions.length !==
-    dto.permissionIds.length
-  ) {
-    throw new ConflictException(
-      "Groups can only contain parent permissions",
-    );
-  }
-
-  await this.prisma.groupPermission.createMany({
-    data: dto.permissionIds.map(
-      (permissionId) => ({
-        groupId: group.id,
-        permissionId,
-      }),
-    ),
-  });
-}
-
-    return this.prisma.group.findUnique({
-      where: {
-        id: group.id,
-      },
-
-      include: {
-        permissions: {
-          include: {
-            permission: true,
+      dto.permissionIds &&
+      dto.permissionIds.length > 0
+    ) {
+      const permissions =
+        await this.prisma.permission.findMany({
+          where: {
+            id: {
+              in: dto.permissionIds,
+            },
+            parentId: null,
           },
+
+          select: {
+            id: true,
+          },
+        });
+
+      if (
+        permissions.length !==
+        dto.permissionIds.length
+      ) {
+        throw new ConflictException(
+          "Groups can only contain parent permissions",
+        );
+      }
+
+      await this.prisma.groupPermission.createMany({
+        data: dto.permissionIds.map(
+          (permissionId) => ({
+            groupId: group.id,
+            permissionId,
+          }),
+        ),
+      });
+    }
+
+    const createdGroup =
+      await this.prisma.group.findUnique({
+        where: {
+          id: group.id,
         },
 
-        roles: true,
+        include: {
+          permissions: {
+            include: {
+              permission: true,
+            },
+          },
+
+          roles: true,
+        },
+      });
+
+    if (!createdGroup) {
+      throw new NotFoundException(
+        "Created group not found",
+      );
+    }
+
+    // -----------------------------------
+    // AUDIT: GROUP CREATED
+    // -----------------------------------
+
+    await this.auditLogsService.log({
+      actorId: currentUserId,
+      action: AuditAction.GROUP_CREATED,
+      entity: "Group",
+      entityId: createdGroup.id,
+      description:
+        `Group ${createdGroup.name} was created`,
+      newValues: {
+        name: createdGroup.name,
+        active: createdGroup.active,
+        permissions:
+          createdGroup.permissions.map(
+            (gp) => gp.permission.name,
+          ),
       },
+      ipAddress:
+        req.ip ||
+        req.headers["x-forwarded-for"] ||
+        null,
+      userAgent:
+        req.headers["user-agent"] ||
+        null,
     });
+
+    return createdGroup;
   }
 
   // -----------------------------------
@@ -153,203 +233,437 @@ export class GroupsService {
     return group;
   }
 
-// -----------------------------------
-// UPDATE GROUP
-// -----------------------------------
-
-async update(
-  id: number,
-  dto: UpdateGroupDto,
-) {
-  const group =
-    await this.prisma.group.findUnique({
-      where: {
-        id,
-      },
-    });
-
-  if (!group) {
-    throw new NotFoundException(
-      "Group not found",
-    );
-  }
-
   // -----------------------------------
-  // CHECK NAME
+  // UPDATE GROUP
   // -----------------------------------
 
-  if (
-    dto.name &&
-    dto.name !== group.name
+  async update(
+    id: number,
+    dto: UpdateGroupDto,
+    currentUserId: number,
+    req: any,
   ) {
-    const existing =
+    const group =
       await this.prisma.group.findUnique({
         where: {
-          name: dto.name,
+          id,
+        },
+
+        include: {
+          permissions: {
+            include: {
+              permission: true,
+            },
+          },
         },
       });
 
-    if (existing) {
-      throw new ConflictException(
-        "Group already exists",
+    if (!group) {
+      throw new NotFoundException(
+        "Group not found",
       );
     }
-  }
 
-  // -----------------------------------
-  // VALIDATE PARENT PERMISSIONS
-  // -----------------------------------
-
-  if (
-    dto.permissionIds !== undefined
-  ) {
-    const permissions =
-      await this.prisma.permission.findMany({
-        where: {
-          id: {
-            in: dto.permissionIds,
-          },
-          parentId: null,
-        },
-        select: {
-          id: true,
-        },
-      });
+    // -----------------------------------
+    // CHECK NAME
+    // -----------------------------------
 
     if (
-      permissions.length !==
-      dto.permissionIds.length
+      dto.name &&
+      dto.name !== group.name
     ) {
-      throw new ConflictException(
-        "Groups can only contain parent permissions",
-      );
+      const existing =
+        await this.prisma.group.findUnique({
+          where: {
+            name: dto.name,
+          },
+        });
+
+      if (existing) {
+        throw new ConflictException(
+          "Group already exists",
+        );
+      }
     }
 
-    await this.prisma.groupPermission.deleteMany(
-      {
+    // -----------------------------------
+    // SAVE OLD PERMISSIONS
+    // -----------------------------------
+
+    const oldPermissionNames =
+      group.permissions
+        .map(
+          (gp) => gp.permission.name,
+        )
+        .sort();
+
+    // -----------------------------------
+    // VALIDATE PARENT PERMISSIONS
+    // -----------------------------------
+
+    if (
+      dto.permissionIds !== undefined
+    ) {
+      const permissions =
+        await this.prisma.permission.findMany({
+          where: {
+            id: {
+              in: dto.permissionIds,
+            },
+
+            parentId: null,
+          },
+
+          select: {
+            id: true,
+          },
+        });
+
+      if (
+        permissions.length !==
+        dto.permissionIds.length
+      ) {
+        throw new ConflictException(
+          "Groups can only contain parent permissions",
+        );
+      }
+
+      await this.prisma.groupPermission.deleteMany({
         where: {
           groupId: id,
         },
-      },
-    );
+      });
 
-    if (dto.permissionIds.length > 0) {
-      await this.prisma.groupPermission.createMany(
-        {
+      if (
+        dto.permissionIds.length > 0
+      ) {
+        await this.prisma.groupPermission.createMany({
           data: dto.permissionIds.map(
             (permissionId) => ({
               groupId: id,
               permissionId,
             }),
           ),
-        },
-      );
+        });
+      }
     }
-  }
 
-  // -----------------------------------
-  // UPDATE GROUP
-  // -----------------------------------
+    // -----------------------------------
+    // UPDATE GROUP
+    // -----------------------------------
 
-  await this.prisma.group.update({
-    where: {
-      id,
-    },
-
-    data: {
-      ...(dto.name !== undefined && {
-        name: dto.name,
-      }),
-
-      ...(dto.active !== undefined && {
-        active: dto.active,
-      }),
-    },
-  });
-
-  return this.findOne(id);
-}
-
-// -----------------------------------
-// DELETE GROUP
-// -----------------------------------
-
-async remove(id: number) {
-  const group =
-    await this.prisma.group.findUnique({
+    await this.prisma.group.update({
       where: {
         id,
       },
 
-      include: {
-        roles: true,
+      data: {
+        ...(dto.name !== undefined && {
+          name: dto.name,
+        }),
+
+        ...(dto.active !== undefined && {
+          active: dto.active,
+        }),
       },
     });
 
-  if (!group) {
-    throw new NotFoundException(
-      "Group not found",
-    );
-  }
-
-  // Don't allow deleting a group
-  // which is currently assigned to roles.
-
-  if (group.roles.length > 0) {
-    throw new ConflictException(
-      "This group cannot be deleted because roles are assigned to it",
-    );
-  }
-
-  await this.prisma.groupPermission.deleteMany({
-    where: {
-      groupId: id,
-    },
-  });
-
-  await this.prisma.group.delete({
-    where: {
-      id,
-    },
-  });
-
-  return {
-    message: "Group deleted successfully",
-  };
-}
-
-// -----------------------------------
-// TOGGLE STATUS
-// -----------------------------------
-
-async toggleStatus(id: number) {
-  const group =
-    await this.prisma.group.findUnique({
-      where: { id },
-    });
-
-  if (!group) {
-    throw new NotFoundException(
-      "Group not found",
-    );
-  }
-
-  return this.prisma.group.update({
-    where: { id },
-
-    data: {
-      active: !group.active,
-    },
-
-    include: {
-      permissions: {
-        include: {
-          permission: true,
+    const updatedGroup =
+      await this.prisma.group.findUnique({
+        where: {
+          id,
         },
-      },
 
-      roles: true,
-    },
-  });
-}
+        include: {
+          permissions: {
+            include: {
+              permission: true,
+            },
+          },
+
+          roles: true,
+        },
+      });
+
+    if (!updatedGroup) {
+      throw new NotFoundException(
+        "Updated group not found",
+      );
+    }
+
+    // -----------------------------------
+    // SAVE NEW PERMISSIONS
+    // -----------------------------------
+
+    const newPermissionNames =
+      updatedGroup.permissions
+        .map(
+          (gp) => gp.permission.name,
+        )
+        .sort();
+
+    const permissionsChanged =
+      dto.permissionIds !== undefined &&
+      (
+        oldPermissionNames.length !==
+          newPermissionNames.length ||
+        oldPermissionNames.some(
+          (permission, index) =>
+            permission !==
+            newPermissionNames[index],
+        )
+      );
+
+    // -----------------------------------
+    // AUDIT: GROUP UPDATED
+    // -----------------------------------
+
+    await this.auditLogsService.log({
+      actorId: currentUserId,
+      action: AuditAction.GROUP_UPDATED,
+      entity: "Group",
+      entityId: updatedGroup.id,
+      description:
+        `Group ${updatedGroup.name} was updated`,
+      oldValues: {
+        name: group.name,
+        active: group.active,
+        permissions:
+          oldPermissionNames,
+      },
+      newValues: {
+        name: updatedGroup.name,
+        active: updatedGroup.active,
+        permissions:
+          newPermissionNames,
+      },
+      ipAddress:
+        req.ip ||
+        req.headers["x-forwarded-for"] ||
+        null,
+      userAgent:
+        req.headers["user-agent"] ||
+        null,
+    });
+
+    // -----------------------------------
+    // AUDIT: GROUP STATUS CHANGED
+    // -----------------------------------
+
+    if (
+      group.active !==
+      updatedGroup.active
+    ) {
+      await this.auditLogsService.log({
+        actorId: currentUserId,
+        action:
+          AuditAction.GROUP_STATUS_CHANGED,
+        entity: "Group",
+        entityId: updatedGroup.id,
+        description:
+          `Group ${updatedGroup.name} status was changed`,
+        oldValues: {
+          active: group.active,
+        },
+        newValues: {
+          active: updatedGroup.active,
+        },
+        ipAddress:
+          req.ip ||
+          req.headers["x-forwarded-for"] ||
+          null,
+        userAgent:
+          req.headers["user-agent"] ||
+          null,
+      });
+    }
+
+    // -----------------------------------
+    // AUDIT: GROUP PERMISSIONS CHANGED
+    // -----------------------------------
+
+    if (permissionsChanged) {
+      await this.auditLogsService.log({
+        actorId: currentUserId,
+        action:
+          AuditAction.GROUP_PERMISSIONS_CHANGED,
+        entity: "Group",
+        entityId: updatedGroup.id,
+        description:
+          `Group ${updatedGroup.name} permissions were changed`,
+        oldValues: {
+          permissions:
+            oldPermissionNames,
+        },
+        newValues: {
+          permissions:
+            newPermissionNames,
+        },
+        ipAddress:
+          req.ip ||
+          req.headers["x-forwarded-for"] ||
+          null,
+        userAgent:
+          req.headers["user-agent"] ||
+          null,
+      });
+    }
+
+    return updatedGroup;
+  }
+
+  // -----------------------------------
+  // DELETE GROUP
+  // -----------------------------------
+
+  async remove(
+    id: number,
+    currentUserId: number,
+    req: any,
+  ) {
+    const group =
+      await this.prisma.group.findUnique({
+        where: {
+          id,
+        },
+
+        include: {
+          roles: true,
+
+          permissions: {
+            include: {
+              permission: true,
+            },
+          },
+        },
+      });
+
+    if (!group) {
+      throw new NotFoundException(
+        "Group not found",
+      );
+    }
+
+    // Don't allow deleting a group
+    // which is currently assigned to roles.
+
+    if (group.roles.length > 0) {
+      throw new ConflictException(
+        "This group cannot be deleted because roles are assigned to it",
+      );
+    }
+
+    // -----------------------------------
+    // AUDIT BEFORE DELETE
+    // -----------------------------------
+
+    await this.auditLogsService.log({
+      actorId: currentUserId,
+      action: AuditAction.GROUP_DELETED,
+      entity: "Group",
+      entityId: group.id,
+      description:
+        `Group ${group.name} was deleted`,
+      oldValues: {
+        name: group.name,
+        active: group.active,
+        permissions:
+          group.permissions.map(
+            (gp) => gp.permission.name,
+          ),
+      },
+      ipAddress:
+        req.ip ||
+        req.headers["x-forwarded-for"] ||
+        null,
+      userAgent:
+        req.headers["user-agent"] ||
+        null,
+    });
+
+    await this.prisma.groupPermission.deleteMany({
+      where: {
+        groupId: id,
+      },
+    });
+
+    await this.prisma.group.delete({
+      where: {
+        id,
+      },
+    });
+
+    return {
+      message: "Group deleted successfully",
+    };
+  }
+
+  // -----------------------------------
+  // TOGGLE STATUS
+  // -----------------------------------
+
+  async toggleStatus(
+    id: number,
+    currentUserId: number,
+    req: any,
+  ) {
+    const group =
+      await this.prisma.group.findUnique({
+        where: { id },
+      });
+
+    if (!group) {
+      throw new NotFoundException(
+        "Group not found",
+      );
+    }
+
+    const updatedGroup =
+      await this.prisma.group.update({
+        where: { id },
+
+        data: {
+          active: !group.active,
+        },
+
+        include: {
+          permissions: {
+            include: {
+              permission: true,
+            },
+          },
+
+          roles: true,
+        },
+      });
+
+    // -----------------------------------
+    // AUDIT: GROUP STATUS CHANGED
+    // -----------------------------------
+
+    await this.auditLogsService.log({
+      actorId: currentUserId,
+      action:
+        AuditAction.GROUP_STATUS_CHANGED,
+      entity: "Group",
+      entityId: updatedGroup.id,
+      description:
+        `Group ${updatedGroup.name} status was changed`,
+      oldValues: {
+        active: group.active,
+      },
+      newValues: {
+        active: updatedGroup.active,
+      },
+      ipAddress:
+        req.ip ||
+        req.headers["x-forwarded-for"] ||
+        null,
+      userAgent:
+        req.headers["user-agent"] ||
+        null,
+    });
+
+    return updatedGroup;
+  }
 }
