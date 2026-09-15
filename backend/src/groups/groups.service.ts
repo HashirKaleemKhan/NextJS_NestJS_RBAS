@@ -22,9 +22,10 @@ export class GroupsService {
   // GET GROUPS
   // -----------------------------------
 
-  async findAll(
+async findAll(
   page = 1,
   limit = 10,
+  search = "",
 ) {
   const safePage = Math.max(
     1,
@@ -36,12 +37,70 @@ export class GroupsService {
     Math.max(1, Number(limit) || 10),
   );
 
+  const searchQuery = search.trim();
+
+  const where: any = {};
+
+  if (searchQuery) {
+    const normalizedSearch =
+      searchQuery.toLowerCase();
+
+    const searchConditions: any[] = [
+      {
+        name: {
+          contains: searchQuery,
+          mode: "insensitive",
+        },
+      },
+
+      {
+        permissions: {
+          some: {
+            permission: {
+              name: {
+                contains: searchQuery,
+                mode: "insensitive",
+              },
+            },
+          },
+        },
+      },
+
+      {
+        roles: {
+          some: {
+            name: {
+              contains: searchQuery,
+              mode: "insensitive",
+            },
+          },
+        },
+      },
+    ];
+
+    if (normalizedSearch === "active") {
+      searchConditions.push({
+        active: true,
+      });
+    }
+
+    if (normalizedSearch === "inactive") {
+      searchConditions.push({
+        active: false,
+      });
+    }
+
+    where.OR = searchConditions;
+  }
+
   const skip =
     (safePage - 1) * safeLimit;
 
   const [groups, total] =
     await Promise.all([
       this.prisma.group.findMany({
+        where,
+
         skip,
         take: safeLimit,
 
@@ -60,7 +119,9 @@ export class GroupsService {
         },
       }),
 
-      this.prisma.group.count(),
+      this.prisma.group.count({
+        where,
+      }),
     ]);
 
   return {
@@ -76,6 +137,7 @@ export class GroupsService {
     },
   };
 }
+
 
   // -----------------------------------
   // CREATE GROUP

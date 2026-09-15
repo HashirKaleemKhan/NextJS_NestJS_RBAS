@@ -30,19 +30,21 @@ export class GroupsController {
     private readonly groupsService: GroupsService,
   ) {}
 
-  // -----------------------------------
-  // GET GROUPS
-  // -----------------------------------
+// -----------------------------------
+// GET GROUPS
+// -----------------------------------
 
-  @Get()
+@Get()
 @Permissions("roles.manage")
 findAll(
   @Query("page") page?: string,
   @Query("limit") limit?: string,
+  @Query("search") search?: string,
 ) {
   return this.groupsService.findAll(
     page ? Number(page) : 1,
     limit ? Number(limit) : 10,
+    search ?? "",
   );
 }
 

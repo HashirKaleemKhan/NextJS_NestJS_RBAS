@@ -210,27 +210,29 @@ export default function ViewGroupPage() {
           </div>
 
           <div className="company-user-stat-card">
-
-            <div className="company-user-stat-icon company-user-stat-icon-green">
-              ✓
+            <div
+              className={`company-user-stat-icon ${
+                group.active
+                  ? "company-user-stat-icon-green"
+                  : "company-user-stat-icon-red"
+              }`}
+            >
+              {group.active ? "✓" : "!"}
             </div>
 
             <div className="company-user-stat-content">
               <span>Status</span>
 
               <strong>
-                {group.active
-                  ? "Active"
-                  : "Inactive"}
+                {group.active ? "Active" : "Inactive"}
               </strong>
 
               <small>
                 {group.active
                   ? "Available for role assignment"
-                  : "Currently unavailable"}
+                  : "Currently unavailable for Role assignment"}
               </small>
             </div>
-
           </div>
 
           <div className="company-user-stat-card">

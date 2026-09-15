@@ -1,6 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   useRouter,
   useSearchParams,
@@ -102,6 +106,13 @@ export default function UsersPage() {
       totalPages: 0,
     });
 
+  /*
+   * Prevent the search effect from running
+   * during the initial page load.
+   */
+  const initialUsersLoaded =
+    useRef(false);
+
   const success =
     searchParams.get("success");
 
@@ -109,39 +120,54 @@ export default function UsersPage() {
   // LOAD USERS
   // -----------------------------------
 
-  async function loadUsers(page: number) {
-    const usersResponse = await api.get(
-      "/users",
-      {
+  async function loadUsers(
+    page: number,
+    searchQuery = search,
+  ) {
+    const usersResponse =
+      await api.get("/users", {
         params: {
           page,
           limit: 10,
+          search:
+            searchQuery.trim(),
         },
-      },
-    );
+      });
 
-    const response = usersResponse.data;
+    const response =
+      usersResponse.data;
 
-    const userList = Array.isArray(response)
-      ? response
-      : Array.isArray(response?.data)
-        ? response.data
-        : [];
+    const userList =
+      Array.isArray(response)
+        ? response
+        : Array.isArray(
+              response?.data,
+            )
+          ? response.data
+          : [];
 
     setUsers(userList);
 
     setPagination({
-      page: response?.page ?? page,
-      limit: response?.limit ?? 10,
+      page:
+        response?.page ??
+        page,
+
+      limit:
+        response?.limit ??
+        10,
+
       total:
         response?.total ??
         userList.length,
+
       totalPages:
         response?.totalPages ??
         Math.ceil(
           (response?.total ??
             userList.length) /
-            (response?.limit ?? 10),
+            (response?.limit ??
+              10),
         ),
     });
   }
@@ -169,60 +195,77 @@ export default function UsersPage() {
         setLoading(true);
         setError("");
 
-        await loadUsers(1);
+        await loadUsers(1, "");
+
+        /*
+         * Mark initial user loading as complete.
+         * The search effect will now respond to
+         * future search input changes.
+         */
+        initialUsersLoaded.current =
+          true;
 
         try {
-          const rolesResponse = await api.get("/roles", {
-          params: {
-            page: 1,
-            limit: 100,
-          },
-        });
+          const rolesResponse =
+            await api.get("/roles", {
+              params: {
+                page: 1,
+                limit: 100,
+              },
+            });
 
-        const rolesData = rolesResponse.data;
+          const rolesData =
+            rolesResponse.data;
 
-        const roleList = Array.isArray(rolesData)
-          ? rolesData
-          : Array.isArray(rolesData?.data)
-            ? rolesData.data
-            : [];
+          const roleList =
+            Array.isArray(rolesData)
+              ? rolesData
+              : Array.isArray(
+                    rolesData?.data,
+                  )
+                ? rolesData.data
+                : [];
 
-        setRoles(roleList);
+          setRoles(roleList);
         } catch {
           setRoles([]);
         }
 
         try {
           const groupsResponse =
-          await api.get<{
-            data: Group[];
-            pagination: {
-              page: number;
-              limit: number;
-              total: number;
-              totalPages: number;
-            };
-          }>("/groups", {
-            params: {
-              page: 1,
-              limit: 100,
-            },
-          });
+            await api.get<{
+              data: Group[];
+              pagination: {
+                page: number;
+                limit: number;
+                total: number;
+                totalPages: number;
+              };
+            }>("/groups", {
+              params: {
+                page: 1,
+                limit: 100,
+              },
+            });
 
-        setGroups(groupsResponse.data.data);
+          setGroups(
+            groupsResponse.data.data,
+          );
         } catch {
           setGroups([]);
         }
       } catch (err: any) {
         if (
-          err?.response?.status === 401
+          err?.response?.status ===
+          401
         ) {
           router.replace("/login");
           return;
         }
 
         setError(
-          err?.response?.data?.message ||
+          err?.response?.data
+            ?.message ||
             "Unable to load users.",
         );
       } finally {
@@ -234,69 +277,61 @@ export default function UsersPage() {
   }, [router]);
 
   // -----------------------------------
-  // LOAD PAGE
+  // SERVER-SIDE SEARCH
   // -----------------------------------
 
   useEffect(() => {
-    /*
-     * Page 1 is already loaded by the
-     * initial load above.
-     *
-     * Every later page change, including
-     * returning from page 2 to page 1,
-     * must fetch the requested page.
-     */
-    if (pagination.page === 1) {
+    if (!initialUsersLoaded.current) {
       return;
     }
 
-    async function loadPage() {
-      try {
-        setPageLoading(true);
-        setError("");
+    const timer =
+      setTimeout(() => {
+        async function searchUsers() {
+          try {
+            setPageLoading(true);
+            setError("");
 
-        await loadUsers(
-          pagination.page,
-        );
+            window.scrollTo({
+              top: 0,
+              behavior: "smooth",
+            });
 
-        window.scrollTo({
-          top: 0,
-          behavior: "smooth",
-        });
-      } catch (err: any) {
-        if (
-          err?.response?.status === 401
-        ) {
-          router.replace("/login");
-          return;
+            await loadUsers(
+              1,
+              search,
+            );
+          } catch (err: any) {
+            if (
+              err?.response?.status ===
+              401
+            ) {
+              router.replace(
+                "/login",
+              );
+              return;
+            }
+
+            setError(
+              err?.response?.data
+                ?.message ||
+                "Unable to search users.",
+            );
+          } finally {
+            setPageLoading(false);
+          }
         }
 
-        setError(
-          err?.response?.data?.message ||
-            "Unable to load users.",
-        );
-      } finally {
-        setPageLoading(false);
-      }
-    }
+        searchUsers();
+      }, 300);
 
-    loadPage();
-  }, [
-    pagination.page,
-    router,
-  ]);
-
-  /*
-   * When returning to page 1, the effect
-   * above intentionally does not run because
-   * page 1 was loaded during the initial load.
-   *
-   * We therefore explicitly reload page 1
-   * from the pagination control.
-   */
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [search, router]);
 
   // -----------------------------------
-  // RELOAD PAGE
+  // CHANGE PAGE
   // -----------------------------------
 
   async function changePage(
@@ -326,17 +361,22 @@ export default function UsersPage() {
         behavior: "smooth",
       });
 
-      await loadUsers(nextPage);
+      await loadUsers(
+        nextPage,
+        search,
+      );
     } catch (err: any) {
       if (
-        err?.response?.status === 401
+        err?.response?.status ===
+        401
       ) {
         router.replace("/login");
         return;
       }
 
       setError(
-        err?.response?.data?.message ||
+        err?.response?.data
+          ?.message ||
           "Unable to load users.",
       );
     } finally {
@@ -508,83 +548,24 @@ export default function UsersPage() {
   }
 
   // -----------------------------------
-  // FILTER USERS
+  // SEARCH DISPLAY
   // -----------------------------------
 
-  const filteredUsers =
-    useMemo(() => {
-      const query =
-        search
-          .toLowerCase()
-          .trim();
-
-      if (!query) {
-        return users;
-      }
-
-      return users.filter(
-        (user) => {
-          const groupName =
-            getGroupName(user);
-
-          const reportsTo =
-            getReportsTo(user);
-
-          return [
-            user.name,
-            user.email,
-            user.role?.name,
-            groupName,
-            reportsTo,
-          ]
-            .filter(Boolean)
-            .some((value) =>
-              value!
-                .toLowerCase()
-                .includes(query),
-            );
-        },
-      );
-    }, [
-      users,
-      roles,
-      groups,
-      search,
-    ]);
+  /*
+   * Search is now performed by the backend.
+   * Therefore users already contains only
+   * the records matching the current search.
+   */
+  const filteredUsers = users;
 
   // -----------------------------------
-  // SEARCH
+  // SEARCH INPUT
   // -----------------------------------
 
   function handleSearch(
     value: string,
   ) {
     setSearch(value);
-
-    if (pagination.page !== 1) {
-      setPagination((current) => ({
-        ...current,
-        page: 1,
-      }));
-
-      /*
-       * Search resets to page 1.
-       * Explicitly reload page 1 because
-       * page 1 is already the current state
-       * after setPagination.
-       */
-      loadUsers(1).catch((err: any) => {
-        setError(
-          err?.response?.data?.message ||
-            "Unable to load users.",
-        );
-      });
-
-      window.scrollTo({
-        top: 0,
-        behavior: "smooth",
-      });
-    }
   }
 
   // -----------------------------------
@@ -598,7 +579,8 @@ export default function UsersPage() {
       getRole(user);
 
     const isProtectedAdmin =
-      currentUser?.role === "Admin" &&
+      currentUser?.role ===
+        "Admin" &&
       role?.isAdmin === true;
 
     if (isProtectedAdmin) {
@@ -655,7 +637,8 @@ export default function UsersPage() {
       );
     } catch (err: any) {
       setError(
-        err?.response?.data?.message ||
+        err?.response?.data
+          ?.message ||
           "Unable to update user status.",
       );
     }
@@ -680,7 +663,8 @@ export default function UsersPage() {
       getRole(user);
 
     const isProtectedAdmin =
-      currentUser?.role === "Admin" &&
+      currentUser?.role ===
+        "Admin" &&
       role?.isAdmin === true;
 
     if (isProtectedAdmin) {
@@ -727,7 +711,8 @@ export default function UsersPage() {
       );
     } catch (err: any) {
       setError(
-        err?.response?.data?.message ||
+        err?.response?.data
+          ?.message ||
           "Unable to delete user.",
       );
     } finally {
@@ -1316,7 +1301,8 @@ export default function UsersPage() {
                   Page{" "}
                   {pagination.page}{" "}
                   of{" "}
-                  {pagination.totalPages || 1}
+                  {pagination.totalPages ||
+                    1}
                 </span>
 
                 <button

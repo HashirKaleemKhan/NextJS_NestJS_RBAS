@@ -55,10 +55,15 @@ export class RolesService {
   // GET ROLES
   // -----------------------------------
 
-  async findAll(
+  // -----------------------------------
+// GET ROLES
+// -----------------------------------
+
+async findAll(
   currentUserId: number,
   page = 1,
   limit = 10,
+  search = "",
 ) {
   const currentUser =
     await this.prisma.user.findUnique({
@@ -111,15 +116,112 @@ export class RolesService {
 
   const safeLimit = Math.min(
     100,
-    Math.max(1, Number(limit) || 10),
+    Math.max(
+      1,
+      Number(limit) || 10,
+    ),
   );
 
+  const searchQuery =
+    search.trim();
+
+  const where: any = {};
+
+  // -----------------------------------
+  // SERVER-SIDE SEARCH
+  // -----------------------------------
+
+  if (searchQuery) {
+    const normalizedSearch =
+      searchQuery.toLowerCase();
+
+    const searchConditions: any[] = [
+      {
+        name: {
+          contains: searchQuery,
+          mode: "insensitive",
+        },
+      },
+
+      {
+        group: {
+          name: {
+            contains: searchQuery,
+            mode: "insensitive",
+          },
+        },
+      },
+
+      {
+        reportsToRole: {
+          name: {
+            contains: searchQuery,
+            mode: "insensitive",
+          },
+        },
+      },
+
+      {
+        permissions: {
+          some: {
+            permission: {
+              name: {
+                contains: searchQuery,
+                mode: "insensitive",
+              },
+            },
+          },
+        },
+      },
+    ];
+
+    // -----------------------------------
+    // SEARCH ADMIN
+    // -----------------------------------
+
+    if (
+      normalizedSearch.includes("admin") ||
+      normalizedSearch.includes(
+        "administrator",
+      )
+    ) {
+      searchConditions.push({
+        isAdmin: true,
+      });
+    }
+
+    // -----------------------------------
+    // SEARCH ACTIVE / INACTIVE
+    // -----------------------------------
+
+    if (
+      normalizedSearch === "active"
+    ) {
+      searchConditions.push({
+        active: true,
+      });
+    }
+
+    if (
+      normalizedSearch === "inactive"
+    ) {
+      searchConditions.push({
+        active: false,
+      });
+    }
+
+    where.OR = searchConditions;
+  }
+
   const skip =
-    (safePage - 1) * safeLimit;
+    (safePage - 1) *
+    safeLimit;
 
   const [roles, total] =
     await Promise.all([
       this.prisma.role.findMany({
+        where,
+
         skip,
         take: safeLimit,
 
@@ -144,7 +246,9 @@ export class RolesService {
         },
       }),
 
-      this.prisma.role.count(),
+      this.prisma.role.count({
+        where,
+      }),
     ]);
 
   return {

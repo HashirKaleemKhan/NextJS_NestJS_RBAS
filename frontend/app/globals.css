@@ -5508,6 +5508,11 @@ a {
   color: #b7791f;
 }
 
+.company-user-stat-icon-red {
+  color: #c2414f;
+  background: #fff0f1;
+}
+
 .company-user-stat-content {
   min-width: 0;
 }

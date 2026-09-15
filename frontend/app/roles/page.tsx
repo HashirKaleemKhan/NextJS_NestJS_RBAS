@@ -1,6 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 
 import { api } from "@/lib/api";
@@ -121,6 +125,26 @@ export default function RolesPage() {
       totalPages: 0,
     });
 
+  /*
+   * Used to debounce server-side search.
+   */
+  const searchTimer =
+    useRef<ReturnType<typeof setTimeout> | null>(
+      null,
+    );
+
+  // -----------------------------------
+  // CLEAN UP SEARCH TIMER
+  // -----------------------------------
+
+  useEffect(() => {
+    return () => {
+      if (searchTimer.current) {
+        clearTimeout(searchTimer.current);
+      }
+    };
+  }, []);
+
   // -----------------------------------
   // SUCCESS MESSAGE
   // -----------------------------------
@@ -150,6 +174,7 @@ export default function RolesPage() {
 
   async function loadRoles(
     page: number,
+    searchQuery = search,
     showInitialLoading = false,
   ) {
     try {
@@ -168,15 +193,18 @@ export default function RolesPage() {
             params: {
               page,
               limit: 10,
+              search:
+                searchQuery.trim(),
             },
           },
         );
 
-      const roleList = Array.isArray(
-        response.data?.data,
-      )
-        ? response.data.data
-        : [];
+      const roleList =
+        Array.isArray(
+          response.data?.data,
+        )
+          ? response.data.data
+          : [];
 
       setRoles(roleList);
 
@@ -256,7 +284,11 @@ export default function RolesPage() {
 
     async function loadInitialData() {
       await Promise.all([
-        loadRoles(1, true),
+        loadRoles(
+          1,
+          "",
+          true,
+        ),
         loadGroups(),
       ]);
     }
@@ -338,62 +370,6 @@ export default function RolesPage() {
   }
 
   // -----------------------------------
-  // SEARCH / FILTER
-  // -----------------------------------
-
-  const filteredRoles =
-    useMemo(() => {
-      const query =
-        search
-          .toLowerCase()
-          .trim();
-
-      if (!query) {
-        return roles;
-      }
-
-      return roles.filter((role) => {
-        const groupName =
-          getGroupName(role);
-
-        const reportsTo =
-          getReportsTo(role);
-
-        const permissionNames =
-          role.permissions
-            ?.map(
-              (item) =>
-                item.permission.name,
-            )
-            .join(" ") || "";
-
-        return [
-          role.name,
-          role.isAdmin
-            ? "admin administrator"
-            : "role",
-          groupName,
-          reportsTo,
-          isRoleActive(role)
-            ? "active"
-            : "inactive",
-          permissionNames,
-        ]
-          .filter(Boolean)
-          .some((value) =>
-            value
-              .toLowerCase()
-              .includes(query),
-          );
-      });
-    }, [
-      roles,
-      groups,
-      search,
-      statusOverrides,
-    ]);
-
-  // -----------------------------------
   // SEARCH
   // -----------------------------------
 
@@ -401,6 +377,20 @@ export default function RolesPage() {
     value: string,
   ) {
     setSearch(value);
+
+    if (searchTimer.current) {
+      clearTimeout(
+        searchTimer.current,
+      );
+    }
+
+    searchTimer.current =
+      setTimeout(() => {
+        loadRoles(
+          1,
+          value,
+        );
+      }, 300);
 
     window.scrollTo({
       top: 0,
@@ -435,7 +425,10 @@ export default function RolesPage() {
       behavior: "smooth",
     });
 
-    await loadRoles(nextPage);
+    await loadRoles(
+      nextPage,
+      search,
+    );
   }
 
   // -----------------------------------
@@ -583,7 +576,10 @@ export default function RolesPage() {
               newTotalPages,
             );
 
-      await loadRoles(nextPage);
+      await loadRoles(
+        nextPage,
+        search,
+      );
     } catch (err: any) {
       if (
         err?.response?.status === 401
@@ -617,6 +613,13 @@ export default function RolesPage() {
     roles.filter(
       (role) => !isRoleActive(role),
     ).length;
+
+  /*
+   * Server-side search already returns the
+   * correct current page, so no additional
+   * client-side filtering is required.
+   */
+  const filteredRoles = roles;
 
   // -----------------------------------
   // LOADING

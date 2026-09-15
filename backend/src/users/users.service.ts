@@ -489,22 +489,98 @@ return accessibleIds;
   // GET USERS
   // -----------------------------------
 
-  async findAll(
+  // -----------------------------------
+// GET USERS
+// -----------------------------------
+
+async findAll(
   currentUserId: number,
   page = 1,
   limit = 10,
+  search = "",
 ) {
   const accessibleUserIds =
     await this.getAccessibleUserIds(
       currentUserId,
     );
 
-  const where = {
+  const safePage = Math.max(
+    1,
+    Number(page) || 1,
+  );
+
+  const safeLimit = Math.min(
+    100,
+    Math.max(
+      1,
+      Number(limit) || 10,
+    ),
+  );
+
+  const searchQuery =
+    search.trim();
+
+  const where: any = {
     id: {
       in: accessibleUserIds,
       not: currentUserId,
     },
   };
+
+  // -----------------------------------
+  // SERVER-SIDE SEARCH
+  // -----------------------------------
+
+  if (searchQuery) {
+    where.OR = [
+      {
+        name: {
+          contains: searchQuery,
+          mode: "insensitive",
+        },
+      },
+
+      {
+        email: {
+          contains: searchQuery,
+          mode: "insensitive",
+        },
+      },
+
+      {
+        role: {
+          name: {
+            contains: searchQuery,
+            mode: "insensitive",
+          },
+        },
+      },
+
+      {
+        role: {
+          group: {
+            name: {
+              contains: searchQuery,
+              mode: "insensitive",
+            },
+          },
+        },
+      },
+
+      {
+        manager: {
+          name: {
+            contains: searchQuery,
+            mode: "insensitive",
+          },
+        },
+      },
+    ];
+  }
+
+  const skip =
+    (safePage - 1) *
+    safeLimit;
 
   const [users, total] =
     await Promise.all([
@@ -526,8 +602,8 @@ return accessibleIds;
           name: "asc",
         },
 
-        skip: (page - 1) * limit,
-        take: limit,
+        skip,
+        take: safeLimit,
       }),
 
       this.prisma.user.count({
@@ -537,11 +613,15 @@ return accessibleIds;
 
   return {
     data: users,
+
     total,
-    page,
-    limit,
+
+    page: safePage,
+
+    limit: safeLimit,
+
     totalPages: Math.ceil(
-      total / limit,
+      total / safeLimit,
     ),
   };
 }

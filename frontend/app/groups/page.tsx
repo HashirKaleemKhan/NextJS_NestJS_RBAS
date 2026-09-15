@@ -1,6 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   useRouter,
   useSearchParams,
@@ -49,13 +53,20 @@ export default function GroupsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [groups, setGroups] = useState<Group[]>([]);
+  const [groups, setGroups] =
+    useState<Group[]>([]);
 
-  const [loading, setLoading] = useState(true);
-  const [pageLoading, setPageLoading] = useState(false);
+  const [loading, setLoading] =
+    useState(true);
 
-  const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
+  const [pageLoading, setPageLoading] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
+
+  const [search, setSearch] =
+    useState("");
 
   const [deleteTarget, setDeleteTarget] =
     useState<Group | null>(null);
@@ -71,7 +82,25 @@ export default function GroupsPage() {
       totalPages: 0,
     });
 
-  const success = searchParams.get("success");
+  const searchTimer =
+    useRef<ReturnType<typeof setTimeout> | null>(
+      null,
+    );
+
+  const success =
+    searchParams.get("success");
+
+  // -----------------------------------
+  // CLEAN UP SEARCH TIMER
+  // -----------------------------------
+
+  useEffect(() => {
+    return () => {
+      if (searchTimer.current) {
+        clearTimeout(searchTimer.current);
+      }
+    };
+  }, []);
 
   // -----------------------------------
   // LOAD GROUPS
@@ -79,6 +108,7 @@ export default function GroupsPage() {
 
   async function loadGroups(
     page: number,
+    searchQuery = search,
     showInitialLoading = false,
   ) {
     try {
@@ -97,11 +127,16 @@ export default function GroupsPage() {
             params: {
               page,
               limit: 10,
+              search: searchQuery.trim(),
             },
           },
         );
 
-      setGroups(response.data.data);
+      setGroups(
+        Array.isArray(response.data?.data)
+          ? response.data.data
+          : [],
+      );
 
       setPagination(
         response.data.pagination,
@@ -138,7 +173,7 @@ export default function GroupsPage() {
       return;
     }
 
-    loadGroups(1, true);
+    loadGroups(1, "", true);
   }, [router]);
 
   // -----------------------------------
@@ -150,12 +185,12 @@ export default function GroupsPage() {
       return;
     }
 
-    const timer = setTimeout(() => {
+    const timer = window.setTimeout(() => {
       router.replace("/groups");
     }, 3500);
 
     return () => {
-      clearTimeout(timer);
+      window.clearTimeout(timer);
     };
   }, [success, router]);
 
@@ -206,59 +241,43 @@ export default function GroupsPage() {
       behavior: "smooth",
     });
 
-    await loadGroups(nextPage);
+    await loadGroups(
+      nextPage,
+      search,
+    );
   }
 
   // -----------------------------------
   // SEARCH
   // -----------------------------------
 
-  const filteredGroups = useMemo(() => {
-    const query =
-      search.toLowerCase().trim();
+  function handleSearch(
+    value: string,
+  ) {
+    setSearch(value);
 
-    if (!query) {
-      return groups;
+    if (searchTimer.current) {
+      clearTimeout(searchTimer.current);
     }
 
-    return groups.filter((group) => {
-      const permissionNames =
-        group.permissions
-          ?.map(
-            ({ permission }) =>
-              permission.name,
-          )
-          .join(" ") || "";
+    searchTimer.current =
+      setTimeout(() => {
+        loadGroups(1, value);
+      }, 300);
 
-      const roleNames =
-        group.roles
-          ?.map(
-            (role) => role.name || "",
-          )
-          .join(" ") || "";
-
-      return [
-        group.name,
-        permissionNames,
-        roleNames,
-        group.active
-          ? "active"
-          : "inactive",
-      ]
-        .filter(Boolean)
-        .some((value) =>
-          value
-            .toLowerCase()
-            .includes(query),
-        );
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
     });
-  }, [groups, search]);
+  }
 
   // -----------------------------------
   // DELETE GROUP
   // -----------------------------------
 
-  function deleteGroup(group: Group) {
+  function deleteGroup(
+    group: Group,
+  ) {
     setError("");
     setDeleteTarget(group);
   }
@@ -285,19 +304,32 @@ export default function GroupsPage() {
       const currentPage =
         pagination.page;
 
-      const currentPageItemCount =
-        groups.length;
+      const currentTotal =
+        pagination.total;
 
-      const isLastItemOnPage =
-        currentPageItemCount === 1 &&
-        currentPage > 1;
+      const newTotal =
+        Math.max(
+          0,
+          currentTotal - 1,
+        );
+
+      const newTotalPages =
+        Math.ceil(
+          newTotal / pagination.limit,
+        );
 
       const nextPage =
-        isLastItemOnPage
-          ? currentPage - 1
-          : currentPage;
+        newTotalPages === 0
+          ? 1
+          : Math.min(
+              currentPage,
+              newTotalPages,
+            );
 
-      await loadGroups(nextPage);
+      await loadGroups(
+        nextPage,
+        search,
+      );
 
       router.replace(
         "/groups?success=deleted",
@@ -334,16 +366,17 @@ export default function GroupsPage() {
         `/groups/${group.id}/status`,
       );
 
-      setGroups((currentGroups) =>
-        currentGroups.map((item) =>
-          item.id === group.id
-            ? {
-                ...item,
-                active:
-                  newActiveStatus,
-              }
-            : item,
-        ),
+      setGroups(
+        (currentGroups) =>
+          currentGroups.map((item) =>
+            item.id === group.id
+              ? {
+                  ...item,
+                  active:
+                    newActiveStatus,
+                }
+              : item,
+          ),
       );
 
       router.replace(
@@ -373,9 +406,10 @@ export default function GroupsPage() {
   const totalGroups =
     pagination.total;
 
-  const activeGroups = groups.filter(
-    (group) => group.active,
-  ).length;
+  const activeGroups =
+    groups.filter(
+      (group) => group.active,
+    ).length;
 
   const inactiveGroups =
     groups.filter(
@@ -399,6 +433,13 @@ export default function GroupsPage() {
         pagination.limit,
       pagination.total,
     );
+
+  // -----------------------------------
+  // SERVER-SIDE RESULTS
+  // -----------------------------------
+
+  const filteredGroups =
+    groups;
 
   // -----------------------------------
   // LOADING
@@ -426,9 +467,7 @@ export default function GroupsPage() {
     <DashboardLayout>
       <div className="company-groups-page">
 
-        {/* -------------------------------- */}
         {/* PAGE HEADER */}
-        {/* -------------------------------- */}
 
         <div className="company-page-header">
           <div>
@@ -465,9 +504,7 @@ export default function GroupsPage() {
           </div>
         </div>
 
-        {/* -------------------------------- */}
         {/* SUCCESS */}
-        {/* -------------------------------- */}
 
         {success &&
           getSuccessMessage() && (
@@ -476,9 +513,7 @@ export default function GroupsPage() {
             </div>
           )}
 
-        {/* -------------------------------- */}
         {/* ERROR */}
-        {/* -------------------------------- */}
 
         {error && (
           <div className="company-users-error">
@@ -488,13 +523,9 @@ export default function GroupsPage() {
           </div>
         )}
 
-        {/* -------------------------------- */}
         {/* GROUP STATISTICS */}
-        {/* -------------------------------- */}
 
         <div className="company-user-stats">
-
-          {/* TOTAL */}
 
           <div className="company-user-stat-card">
             <div className="company-user-stat-icon company-user-stat-icon-blue">
@@ -516,8 +547,6 @@ export default function GroupsPage() {
             </div>
           </div>
 
-          {/* ACTIVE */}
-
           <div className="company-user-stat-card">
             <div className="company-user-stat-icon company-user-stat-icon-green">
               ✓
@@ -537,8 +566,6 @@ export default function GroupsPage() {
               </small>
             </div>
           </div>
-
-          {/* INACTIVE */}
 
           <div className="company-user-stat-card">
             <div className="company-user-stat-icon company-user-stat-icon-gold">
@@ -562,9 +589,7 @@ export default function GroupsPage() {
 
         </div>
 
-        {/* -------------------------------- */}
         {/* GROUPS PANEL */}
-        {/* -------------------------------- */}
 
         <div className="company-users-panel">
 
@@ -581,9 +606,8 @@ export default function GroupsPage() {
               </h2>
 
               <p>
-                {filteredGroups.length}{" "}
-                {filteredGroups.length ===
-                1
+                {pagination.total}{" "}
+                {pagination.total === 1
                   ? "group"
                   : "groups"}{" "}
                 found
@@ -600,7 +624,7 @@ export default function GroupsPage() {
                 placeholder="Search groups..."
                 value={search}
                 onChange={(event) =>
-                  setSearch(
+                  handleSearch(
                     event.target.value,
                   )
                 }
@@ -611,7 +635,7 @@ export default function GroupsPage() {
                   type="button"
                   className="company-users-search-clear"
                   onClick={() =>
-                    setSearch("")
+                    handleSearch("")
                   }
                   aria-label="Clear search"
                 >
@@ -621,9 +645,7 @@ export default function GroupsPage() {
             </div>
           </div>
 
-          {/* -------------------------------- */}
           {/* PAGE LOADING */}
-          {/* -------------------------------- */}
 
           {pageLoading ? (
             <div className="company-page-loading">
@@ -636,9 +658,7 @@ export default function GroupsPage() {
           ) : filteredGroups.length ===
             0 ? (
 
-            /* -------------------------------- */
             /* EMPTY */
-            /* -------------------------------- */
 
             <div className="company-users-empty">
 
@@ -677,9 +697,7 @@ export default function GroupsPage() {
             </div>
           ) : (
 
-            /* -------------------------------- */
             /* TABLE */
-            /* -------------------------------- */
 
             <div className="company-users-table-wrapper">
               <table className="company-users-table">
@@ -724,25 +742,18 @@ export default function GroupsPage() {
 
                             <div className="company-user-avatar">
                               {group.name
-                                ?.charAt(
-                                  0,
-                                )
+                                ?.charAt(0)
                                 .toUpperCase() ||
                                 "G"}
                             </div>
 
                             <div className="company-user-details">
                               <div className="company-user-name">
-                                {
-                                  group.name
-                                }
+                                {group.name}
                               </div>
 
                               <div className="company-user-id">
-                                ID #
-                                {
-                                  group.id
-                                }
+                                ID #{group.id}
                               </div>
                             </div>
 
@@ -752,8 +763,7 @@ export default function GroupsPage() {
                         {/* PERMISSIONS */}
 
                         <td>
-                          {group.permissions
-                            ?.length ? (
+                          {group.permissions?.length ? (
                             <div className="company-group-permissions">
                               {group.permissions.map(
                                 ({
@@ -766,14 +776,10 @@ export default function GroupsPage() {
                                     className="company-group-permission-chip"
                                   >
                                     {permission.name
-                                      .split(
-                                        ".",
-                                      )[0]
+                                      .split(".")[0]
                                       .replace(
                                         /^./,
-                                        (
-                                          char,
-                                        ) =>
+                                        (char) =>
                                           char.toUpperCase(),
                                       )}
                                   </span>
@@ -793,8 +799,7 @@ export default function GroupsPage() {
                           <span className="company-role-badge company-role-badge-blue">
                             {group.roles?.length ||
                               0}{" "}
-                            {group.roles
-                              ?.length ===
+                            {group.roles?.length ===
                             1
                               ? "role"
                               : "roles"}
@@ -828,8 +833,6 @@ export default function GroupsPage() {
                         <td>
                           <div className="company-user-actions">
 
-                            {/* VIEW */}
-
                             <button
                               type="button"
                               className="company-icon-button company-icon-view"
@@ -844,8 +847,6 @@ export default function GroupsPage() {
                               ◉
                             </button>
 
-                            {/* EDIT */}
-
                             <button
                               type="button"
                               className="company-icon-button company-icon-edit"
@@ -859,8 +860,6 @@ export default function GroupsPage() {
                             >
                               ✎
                             </button>
-
-                            {/* STATUS */}
 
                             <button
                               type="button"
@@ -890,8 +889,6 @@ export default function GroupsPage() {
                                 : "○"}
                             </button>
 
-                            {/* DELETE */}
-
                             <button
                               type="button"
                               className="company-icon-button company-icon-delete"
@@ -918,9 +915,7 @@ export default function GroupsPage() {
             </div>
           )}
 
-          {/* -------------------------------- */}
-          {/* PAGINATION FOOTER */}
-          {/* -------------------------------- */}
+          {/* PAGINATION */}
 
           {pagination.total > 0 && (
             <div className="company-logs-pagination">
@@ -994,9 +989,7 @@ export default function GroupsPage() {
         </div>
       </div>
 
-      {/* -------------------------------- */}
       {/* DELETE GROUP CONFIRMATION */}
-      {/* -------------------------------- */}
 
       <ConfirmModal
         open={!!deleteTarget}
@@ -1011,7 +1004,9 @@ export default function GroupsPage() {
           </>
         }
         confirmLabel="Delete Group"
-        onConfirm={confirmDeleteGroup}
+        onConfirm={
+          confirmDeleteGroup
+        }
         onCancel={() => {
           if (!deleteLoading) {
             setDeleteTarget(null);

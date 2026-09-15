@@ -54,7 +54,7 @@ create(
   // GET USERS
   // -----------------------------------
 
-  @Get()
+@Get()
 @UseGuards(
   JwtAuthGuard,
   PermissionsGuard,
@@ -64,11 +64,13 @@ findAll(
   @Req() req: any,
   @Query("page") page?: string,
   @Query("limit") limit?: string,
+  @Query("search") search?: string,
 ) {
   return this.usersService.findAll(
     Number(req.user.id),
     page ? Number(page) : 1,
     limit ? Number(limit) : 10,
+    search ?? "",
   );
 }
 
