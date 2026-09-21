@@ -1,11 +1,136 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import {
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
-import { api } from "@/lib/api";
+import {
+  useParams,
+  useRouter,
+} from "next/navigation";
+
+import { gql } from "@apollo/client";
+
+import {
+  useMutation,
+  useQuery,
+} from "@apollo/client/react";
+
 import { getUser } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
+
+// -----------------------------------
+// GRAPHQL
+// -----------------------------------
+
+const USER_QUERY = gql`
+  query UserForEdit($id: Int!) {
+    user(id: $id) {
+      id
+      name
+      email
+      active
+      roleId
+      managerId
+      groupId
+      role {
+        id
+        name
+        active
+      }
+      manager {
+        id
+        name
+      }
+    }
+  }
+`;
+
+const ROLES_QUERY = gql`
+  query RolesForEditUser(
+    $page: Int
+    $limit: Int
+  ) {
+    roles(
+      page: $page
+      limit: $limit
+    ) {
+      data {
+        id
+        name
+        isAdmin
+        active
+        groupId
+        reportsToRoleId
+        group {
+          id
+          name
+          active
+        }
+        reportsToRole {
+          id
+          name
+          isAdmin
+          active
+        }
+      }
+    }
+  }
+`;
+
+const POSSIBLE_MANAGERS_FOR_ROLE_QUERY = gql`
+  query PossibleManagersForRole(
+    $roleId: Int!
+  ) {
+    possibleManagersForRole(
+      roleId: $roleId
+    ) {
+      id
+      name
+      email
+      role {
+        id
+        name
+        active
+      }
+    }
+  }
+`;
+
+const UPDATE_USER_MUTATION = gql`
+  mutation UpdateUser(
+    $id: Int!
+    $input: UpdateUserInput!
+  ) {
+    updateUser(
+      id: $id
+      input: $input
+    ) {
+      id
+      name
+      email
+      active
+      roleId
+      managerId
+      groupId
+      role {
+        id
+        name
+        active
+      }
+      manager {
+        id
+        name
+      }
+    }
+  }
+`;
+
+// -----------------------------------
+// TYPES
+// -----------------------------------
 
 type Group = {
   id: number;
@@ -16,7 +141,6 @@ type Group = {
 type Role = {
   id: number;
   name: string;
-  level: number;
   isAdmin: boolean;
   active: boolean;
   groupId: number | null;
@@ -38,22 +162,15 @@ type User = {
   name: string;
   email: string;
   active: boolean;
+  roleId: number;
+  managerId: number | null;
+  groupId: number | null;
 
   role?: {
     id?: number;
     name: string;
-    level?: number;
     active?: boolean;
-    isAdmin?: boolean;
-    group?: Group | null;
-    reportsToRoleId?: number | null;
-    reportsToRole?: {
-      id: number;
-      name: string;
-      isAdmin: boolean;
-      active: boolean;
-    } | null;
-  };
+  } | null;
 
   manager?: {
     id: number;
@@ -69,10 +186,8 @@ type PossibleManager = {
   role?: {
     id?: number;
     name: string;
-    level?: number;
-    isAdmin?: boolean;
     active?: boolean;
-  };
+  } | null;
 };
 
 type CurrentUser = {
@@ -81,6 +196,53 @@ type CurrentUser = {
   role?: string;
   permissions?: string[];
 };
+
+type UserQueryData = {
+  user: User;
+};
+
+type UserQueryVariables = {
+  id: number;
+};
+
+type RolesQueryData = {
+  roles: {
+    data: Role[];
+  };
+};
+
+type RolesQueryVariables = {
+  page?: number;
+  limit?: number;
+};
+
+type ManagersQueryData = {
+  possibleManagersForRole: PossibleManager[];
+};
+
+type ManagersQueryVariables = {
+  roleId: number;
+};
+
+type UpdateUserMutationData = {
+  updateUser: User;
+};
+
+type UpdateUserMutationVariables = {
+  id: number;
+  input: {
+    name?: string;
+    email?: string;
+    password?: string;
+    roleId?: number;
+    managerId?: number | null;
+    active?: boolean;
+  };
+};
+
+// -----------------------------------
+// PAGE
+// -----------------------------------
 
 export default function EditUserPage() {
   const router = useRouter();
@@ -147,17 +309,32 @@ export default function EditUserPage() {
   // STATE
   // -----------------------------------
 
-  const [loading, setLoading] =
-    useState(true);
-
   const [saving, setSaving] =
     useState(false);
 
   const [error, setError] =
     useState("");
 
+  const errorRef =
+    useRef<HTMLDivElement | null>(null);
+
   // -----------------------------------
-  // AUTH
+  // SCROLL TO ERROR
+  // -----------------------------------
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+
+    errorRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [error]);
+
+  // -----------------------------------
+  // AUTH CHECK
   // -----------------------------------
 
   useEffect(() => {
@@ -191,7 +368,49 @@ export default function EditUserPage() {
   }, [router]);
 
   // -----------------------------------
-  // LOAD USER + ROLES
+  // LOAD USER
+  // -----------------------------------
+
+  const {
+    data: userData,
+    loading: userLoading,
+    error: userQueryError,
+  } = useQuery<
+    UserQueryData,
+    UserQueryVariables
+  >(USER_QUERY, {
+    variables: {
+      id: userId,
+    },
+    skip:
+      !authorized ||
+      !userId ||
+      Number.isNaN(userId),
+    fetchPolicy: "network-only",
+  });
+
+  // -----------------------------------
+  // LOAD ROLES
+  // -----------------------------------
+
+  const {
+    data: rolesData,
+    loading: rolesLoading,
+    error: rolesQueryError,
+  } = useQuery<
+    RolesQueryData,
+    RolesQueryVariables
+  >(ROLES_QUERY, {
+    variables: {
+      page: 1,
+      limit: 100,
+    },
+    skip: !authorized,
+    fetchPolicy: "network-only",
+  });
+
+  // -----------------------------------
+  // SET USER DATA
   // -----------------------------------
 
   useEffect(() => {
@@ -199,303 +418,249 @@ export default function EditUserPage() {
       return;
     }
 
-    if (
-      !userId ||
-      Number.isNaN(userId)
-    ) {
-      router.replace("/users");
+    if (userQueryError) {
+      console.error(
+        "Unable to load user:",
+        userQueryError,
+      );
+
+      setError(
+        userQueryError.message ||
+          "Unable to load user.",
+      );
+
       return;
     }
 
-    async function loadData() {
-      try {
-        setLoading(true);
-        setError("");
-
-        /*
-         * Only load the user and roles.
-         *
-         * The user's role already contains
-         * the group information, so there is
-         * no need to call GET /groups.
-         */
-        const [
-          userResponse,
-        ] = await Promise.all([
-          api.get<User>(
-            `/users/${userId}`,
-          ),
-        ]);
-
-        const loadedUser =
-          userResponse.data;
-
-        setUser(loadedUser);
-
-        const rolesResponse =
-        await api.get<{
-          data: Role[];
-          pagination: {
-            page: number;
-            limit: number;
-            total: number;
-            totalPages: number;
-          };
-        }>("/roles", {
-          params: {
-            page: 1,
-            limit: 100,
-          },
-        });
-
-      setRoles(rolesResponse.data.data);
-
-        setName(
-          loadedUser.name || "",
-        );
-
-        setEmail(
-          loadedUser.email || "",
-        );
-
-        setActive(
-          loadedUser.active,
-        );
-
-        if (
-          loadedUser.role?.id !==
-          undefined
-        ) {
-          setRoleId(
-            String(
-              loadedUser.role.id,
-            ),
-          );
-        } else {
-          setRoleId("");
-        }
-
-        setManagerId(
-          loadedUser.manager
-            ? String(
-                loadedUser.manager.id,
-              )
-            : "",
-        );
-      } catch (err: any) {
-        console.error(
-          "Unable to load user:",
-          err,
-        );
-
-        if (
-          err?.response?.status ===
-          401
-        ) {
-          router.replace("/login");
-          return;
-        }
-
-        if (
-          err?.response?.status ===
-          404
-        ) {
-          router.replace("/users");
-          return;
-        }
-
-        /*
-         * Do not redirect on 403 here.
-         *
-         * The backend is responsible for
-         * deciding whether this user can be
-         * managed. A 403 should be shown
-         * instead of silently redirecting.
-         */
-        const message =
-          err?.response?.data?.message;
-
-        if (Array.isArray(message)) {
-          setError(
-            message.join(", "),
-          );
-        } else {
-          setError(
-            message ||
-              "Unable to load user.",
-          );
-        }
-      } finally {
-        setLoading(false);
-      }
+    if (!userData?.user) {
+      return;
     }
 
-    loadData();
+    const loadedUser =
+      userData.user;
+
+    setUser(loadedUser);
+
+    setName(
+      loadedUser.name || "",
+    );
+
+    setEmail(
+      loadedUser.email || "",
+    );
+
+    setActive(
+      loadedUser.active,
+    );
+
+    setRoleId(
+      String(
+        loadedUser.roleId,
+      ),
+    );
+
+    setManagerId(
+      loadedUser.managerId !==
+        null
+        ? String(
+            loadedUser.managerId,
+          )
+        : "",
+    );
   }, [
     authorized,
-    userId,
-    router,
+    userData,
+    userQueryError,
   ]);
 
   // -----------------------------------
-  // FIND ROLE
+  // SET ROLES
   // -----------------------------------
 
-  function getSelectedRole() {
-    if (roleId) {
-      return roles.find(
-        (role) =>
-          role.id ===
-          Number(roleId),
+  useEffect(() => {
+    if (!authorized) {
+      return;
+    }
+
+    if (rolesQueryError) {
+      console.error(
+        "Unable to load roles:",
+        rolesQueryError,
       );
-    }
 
-    if (!user?.role) {
-      return undefined;
-    }
-
-    if (
-      user.role.id !==
-      undefined
-    ) {
-      return roles.find(
-        (role) =>
-          role.id ===
-          user.role?.id,
+      setError(
+        rolesQueryError.message ||
+          "Unable to load available roles.",
       );
+
+      return;
     }
 
-    return roles.find(
-      (role) =>
-        role.name ===
-        user.role?.name,
+    if (!rolesData?.roles?.data) {
+      return;
+    }
+
+    setRoles(
+      rolesData.roles.data,
     );
-  }
+  }, [
+    authorized,
+    rolesData,
+    rolesQueryError,
+  ]);
 
   // -----------------------------------
-  // FIND GROUP
+  // SELECTED ROLE
   // -----------------------------------
 
-  function getGroupName() {
-    const selectedRole =
-      getSelectedRole();
-
-    /*
-     * Group comes directly from the
-     * selected role returned by /roles.
-     */
-    if (selectedRole?.group?.name) {
-      return selectedRole.group.name;
-    }
-
-    /*
-     * Fallback to the user's current
-     * role group returned by /users/:id.
-     */
-    if (user?.role?.group?.name) {
-      return user.role.group.name;
-    }
-
-    return "Unassigned";
-  }
+  const selectedRole =
+    roles.find(
+      (role) =>
+        role.id ===
+        Number(roleId),
+    );
 
   // -----------------------------------
   // LOAD POSSIBLE MANAGERS
   // -----------------------------------
 
+  const shouldLoadManagers =
+    authorized &&
+    !!user &&
+    !!roleId &&
+    !!selectedRole &&
+    !selectedRole.isAdmin &&
+    selectedRole.reportsToRoleId !==
+      null;
+
+  const {
+    data: managersData,
+    loading: managersQueryLoading,
+    error: managersQueryError,
+  } = useQuery<
+    ManagersQueryData,
+    ManagersQueryVariables
+  >(
+    POSSIBLE_MANAGERS_FOR_ROLE_QUERY,
+    {
+      variables: {
+        roleId: Number(roleId),
+      },
+      skip:
+        !shouldLoadManagers,
+      fetchPolicy: "network-only",
+    },
+  );
+
+  // -----------------------------------
+  // SET MANAGERS
+  // -----------------------------------
+
   useEffect(() => {
-    if (
-      !authorized ||
-      !userId ||
-      !user ||
-      !roleId
-    ) {
+    if (!shouldLoadManagers) {
       setPossibleManagers([]);
       setLoadingManagers(false);
       return;
     }
 
-    const selectedRole =
-      roles.find(
-        (role) =>
-          role.id ===
-          Number(roleId),
+    setLoadingManagers(
+      managersQueryLoading,
+    );
+
+    if (managersQueryError) {
+      console.error(
+        "Unable to load possible managers:",
+        managersQueryError,
       );
 
-    // -----------------------------------
-    // NO MANAGER REQUIRED
-    // -----------------------------------
-
-    if (
-      !selectedRole ||
-      selectedRole.isAdmin ||
-      selectedRole.reportsToRoleId ===
-        null
-    ) {
       setPossibleManagers([]);
-      setLoadingManagers(false);
       return;
     }
 
-    async function loadManagers() {
-      setLoadingManagers(true);
-
-      try {
-        const response =
-          await api.get<
-            PossibleManager[]
-          >(
-            `/users/possible-managers-for-role/${roleId}`,
-          );
-
-        /*
-         * The backend is the source of truth.
-         *
-         * Do not manually inject the old
-         * manager.
-         */
-        const managers =
-  response.data;
-
-            setPossibleManagers(
-              managers,
-            );
-
-            /*
-            * If the current manager is no longer
-            * eligible, automatically clear the
-            * manager selection.
-            */
-            if (
-              managerId &&
-              !managers.some(
-                (manager) =>
-                  manager.id ===
-                  Number(managerId),
-              )
-            ) {
-              setManagerId("");
-            }
-      } catch (err: any) {
-        console.error(
-          "Unable to load possible managers:",
-          err,
-        );
-
-        setPossibleManagers([]);
-      } finally {
-        setLoadingManagers(false);
-      }
+    if (!managersData) {
+      return;
     }
 
-    loadManagers();
+    const managers =
+      managersData.possibleManagersForRole ||
+      [];
+
+    /*
+     * Never allow the user being edited
+     * to appear as their own manager.
+     *
+     * This is especially important when
+     * changing the user's role before saving,
+     * because the backend still sees the
+     * user's current database role.
+     */
+    const filteredManagers =
+      managers.filter(
+        (manager) =>
+          manager.id !== userId,
+      );
+
+    setPossibleManagers(
+      filteredManagers,
+    );
+
+    /*
+     * If the current manager is no longer
+     * eligible for the selected role,
+     * automatically clear the selection.
+     */
+    if (
+      managerId &&
+      !filteredManagers.some(
+        (manager) =>
+          manager.id ===
+          Number(managerId),
+      )
+    ) {
+      setManagerId("");
+    }
   }, [
-    authorized,
+    shouldLoadManagers,
+    managersData,
+    managersQueryLoading,
+    managersQueryError,
     userId,
-    user,
-    roleId,
-    roles,
+    managerId,
   ]);
+
+  // -----------------------------------
+  // UPDATE USER MUTATION
+  // -----------------------------------
+
+  const [
+    updateUserMutation,
+    {
+      loading: updateUserLoading,
+    },
+  ] = useMutation<
+    UpdateUserMutationData,
+    UpdateUserMutationVariables
+  >(UPDATE_USER_MUTATION);
+
+  // -----------------------------------
+  // HANDLE ROLE CHANGE
+  // -----------------------------------
+
+  function handleRoleChange(
+    newRoleId: string,
+  ) {
+    setRoleId(newRoleId);
+
+    /*
+     * The old manager may no longer be
+     * valid for the newly selected role.
+     */
+    setManagerId("");
+
+    setPossibleManagers([]);
+
+    setError("");
+  }
 
   // -----------------------------------
   // SAVE
@@ -517,21 +682,21 @@ export default function EditUserPage() {
     // -----------------------------------
 
     if (!name.trim()) {
-      alert(
+      setError(
         "Full name is required.",
       );
       return;
     }
 
     if (!email.trim()) {
-      alert(
+      setError(
         "Email address is required.",
       );
       return;
     }
 
     if (!roleId) {
-      alert(
+      setError(
         "Role is required.",
       );
       return;
@@ -542,7 +707,7 @@ export default function EditUserPage() {
         email.trim(),
       )
     ) {
-      alert(
+      setError(
         "Enter a valid email address.",
       );
       return;
@@ -552,21 +717,21 @@ export default function EditUserPage() {
       password.trim() &&
       password.length < 6
     ) {
-      alert(
+      setError(
         "New password must be at least 6 characters.",
       );
       return;
     }
 
-    const selectedRole =
+    const role =
       roles.find(
-        (role) =>
-          role.id ===
+        (item) =>
+          item.id ===
           Number(roleId),
       );
 
-    if (!selectedRole) {
-      alert(
+    if (!role) {
+      setError(
         "Please select a valid role.",
       );
       return;
@@ -575,11 +740,7 @@ export default function EditUserPage() {
     setSaving(true);
 
     try {
-      // -----------------------------------
-      // UPDATE USER DETAILS
-      // -----------------------------------
-
-      const data: {
+      const input: {
         name: string;
         email: string;
         password?: string;
@@ -594,37 +755,44 @@ export default function EditUserPage() {
           .toLowerCase(),
 
         roleId: Number(roleId),
+
         active,
       };
 
       if (password.trim()) {
-        data.password =
+        input.password =
           password;
       }
 
       /*
-        * Only send a manager when the
-        * selected role actually requires one.
-        */
-        if (
-          !selectedRole.isAdmin &&
-          selectedRole.reportsToRoleId !== null
-        ) {
-          // Explicitly send null when Unassigned is selected.
-          data.managerId =
-            managerId === ""
-              ? null
-              : Number(managerId);
-        } else {
-          data.managerId = null;
-        }
+       * Only send a manager when the
+       * selected role actually requires one.
+       *
+       * Explicitly send null when the user
+       * selects Unassigned.
+       */
+      if (
+        !role.isAdmin &&
+        role.reportsToRoleId !== null
+      ) {
+        input.managerId =
+          managerId === ""
+            ? null
+            : Number(managerId);
+      } else {
+        input.managerId = null;
+      }
 
-      await api.patch(
-        `/users/${userId}`,
-        data,
+      await updateUserMutation({
+        variables: {
+          id: userId,
+          input,
+        },
+      });
+
+      router.replace(
+        "/users?success=updated",
       );
-      
-      router.replace("/users?success=updated");
     } catch (err: any) {
       console.error(
         "Unable to update user:",
@@ -632,20 +800,12 @@ export default function EditUserPage() {
       );
 
       const message =
-        err?.response?.data?.message;
+        err?.message;
 
-      if (
-        Array.isArray(message)
-      ) {
-        setError(
-          message.join(", "),
-        );
-      } else {
-        alert(
-          message ||
-            "Unable to update user.",
-        );
-      }
+      setError(
+        message ||
+          "Unable to update user.",
+      );
     } finally {
       setSaving(false);
     }
@@ -657,7 +817,8 @@ export default function EditUserPage() {
 
   if (
     checkingAuth ||
-    loading
+    userLoading ||
+    rolesLoading
   ) {
     return (
       <DashboardLayout>
@@ -681,8 +842,9 @@ export default function EditUserPage() {
     return null;
   }
 
-  const selectedRole =
-    getSelectedRole();
+  // -----------------------------------
+  // DISPLAY DATA
+  // -----------------------------------
 
   const roleName =
     selectedRole?.name ||
@@ -690,7 +852,8 @@ export default function EditUserPage() {
     "No role";
 
   const groupName =
-    getGroupName();
+    selectedRole?.group?.name ||
+    "Unassigned";
 
   const currentManager =
     managerId
@@ -759,7 +922,10 @@ export default function EditUserPage() {
               className="company-create-user-form"
             >
               {error && (
-                <div className="company-users-error">
+                <div
+                  ref={errorRef}
+                  className="company-users-error"
+                >
                   {error}
                 </div>
               )}
@@ -884,25 +1050,11 @@ export default function EditUserPage() {
                   <select
                     id="role"
                     value={roleId}
-                    onChange={(e) => {
-                      const newRoleId =
-                        e.target.value;
-
-                      setRoleId(
-                        newRoleId,
-                      );
-
-                      /*
-                       * The old manager may no
-                       * longer be valid for the
-                       * newly selected role.
-                       */
-                      setManagerId("");
-
-                      setPossibleManagers(
-                        [],
-                      );
-                    }}
+                    onChange={(e) =>
+                      handleRoleChange(
+                        e.target.value,
+                      )
+                    }
                     disabled={saving}
                     required
                   >
@@ -998,7 +1150,9 @@ export default function EditUserPage() {
                       ) : (
                         <select
                           id="manager"
-                          value={managerId}
+                          value={
+                            managerId
+                          }
                           onChange={(e) =>
                             setManagerId(
                               e.target
@@ -1195,10 +1349,12 @@ export default function EditUserPage() {
                   className="company-primary-button"
                   disabled={
                     saving ||
-                    loadingManagers
+                    loadingManagers ||
+                    updateUserLoading
                   }
                 >
-                  {saving
+                  {saving ||
+                  updateUserLoading
                     ? "Saving..."
                     : "Save Changes"}
                 </button>

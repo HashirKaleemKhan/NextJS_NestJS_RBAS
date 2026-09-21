@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 
-import { api } from "@/lib/api";
+import { gql } from "@apollo/client";
+import { useMutation } from "@apollo/client/react";
+
 import { getUser, logout } from "@/lib/auth";
 
 type CurrentUser = {
@@ -12,9 +14,28 @@ type CurrentUser = {
   role?: string;
 };
 
+const LOGOUT_MUTATION = gql`
+  mutation Logout {
+    logout {
+      message
+    }
+  }
+`;
+
+type LogoutMutationData = {
+  logout: {
+    message: string;
+  };
+};
+
 export default function Header() {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  const [logoutMutation] =
+    useMutation<LogoutMutationData>(
+      LOGOUT_MUTATION,
+    );
 
   useEffect(() => {
     setUser(getUser() as CurrentUser | null);
@@ -24,7 +45,7 @@ export default function Header() {
     setDropdownOpen(false);
 
     try {
-      await api.post("/auth/logout");
+      await logoutMutation();
     } catch (error) {
       console.error("Logout audit request failed:", error);
     } finally {

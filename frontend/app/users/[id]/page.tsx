@@ -1,36 +1,76 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import {
+  useParams,
+  useRouter,
+} from "next/navigation";
 
-import { api } from "@/lib/api";
+import { gql } from "@apollo/client";
+import { useQuery } from "@apollo/client/react";
+
 import { getUser } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 
-type Group = {
-  id: number;
-  name: string;
-  active: boolean;
-};
+// -----------------------------------
+// GRAPHQL
+// -----------------------------------
+
+const USER_QUERY = gql`
+  query UserForView($id: Int!) {
+    user(id: $id) {
+      id
+      name
+      email
+      active
+      roleId
+      managerId
+      groupId
+      createdAt
+      updatedAt
+     role {
+        id
+        name
+        active
+        group {
+          id
+          name
+          active
+        }
+      }
+      manager {
+        id
+        name
+      }
+    }
+  }
+`;
+
+// -----------------------------------
+// TYPES
+// -----------------------------------
 
 type UserRole = {
   id?: number;
   name: string;
-  level?: number;
-  active: boolean;
+  active?: boolean;
   isAdmin?: boolean;
   groupId?: number | null;
-  group?: Group | null;
+  group?: {
+    id: number;
+    name: string;
+    active?: boolean;
+  } | null;
 };
 
 type User = {
   id: number;
   name: string;
   email: string;
-  createdAt: string;
+  createdAt?: string;
   active: boolean;
 
-  role?: UserRole;
+  role?: UserRole | null;
 
   manager?: {
     id: number;
@@ -45,26 +85,50 @@ type CurrentUser = {
   permissions?: string[];
 };
 
+type UserQueryData = {
+  user: User | null;
+};
+
+type UserQueryVariables = {
+  id: number;
+};
+
+// -----------------------------------
+// PAGE
+// -----------------------------------
+
 export default function ViewUserPage() {
   const params = useParams();
   const router = useRouter();
 
-  const userId = params.id;
+  const userId = Number(params.id);
 
-  const [user, setUser] =
-    useState<User | null>(null);
+  // -----------------------------------
+  // AUTH
+  // -----------------------------------
 
   const [currentUser, setCurrentUser] =
     useState<CurrentUser | null>(null);
 
-  const [loading, setLoading] =
+  const [authorized, setAuthorized] =
+    useState(false);
+
+  const [checkingAuth, setCheckingAuth] =
     useState(true);
+
+  // -----------------------------------
+  // STATE
+  // -----------------------------------
 
   const [notFound, setNotFound] =
     useState(false);
 
   const [error, setError] =
     useState("");
+
+  // -----------------------------------
+  // AUTH CHECK
+  // -----------------------------------
 
   useEffect(() => {
     const token =
@@ -75,46 +139,79 @@ export default function ViewUserPage() {
       return;
     }
 
-    setCurrentUser(
-      getUser() as CurrentUser | null,
-    );
+    const current =
+      getUser() as CurrentUser | null;
 
-    async function loadUser() {
-      try {
-        const userResponse =
-          await api.get<User>(
-            `/users/${userId}`,
-          );
+    setCurrentUser(current);
+    setAuthorized(true);
+    setCheckingAuth(false);
+  }, [router]);
 
-        setUser(userResponse.data);
-      } catch (err: any) {
-        if (
-          err?.response?.status === 401
-        ) {
-          router.replace("/login");
-          return;
-        }
+  // -----------------------------------
+  // LOAD USER
+  // -----------------------------------
 
-        if (
-          err?.response?.status === 404
-        ) {
-          setNotFound(true);
-          return;
-        }
+  const {
+    data,
+    loading,
+    error: queryError,
+  } = useQuery<
+    UserQueryData,
+    UserQueryVariables
+  >(USER_QUERY, {
+    variables: {
+      id: userId,
+    },
+    skip:
+      !authorized ||
+      !userId ||
+      Number.isNaN(userId),
+    fetchPolicy: "network-only",
+  });
 
-        setError(
-          err?.response?.data?.message ||
-            "Unable to load user",
-        );
-      } finally {
-        setLoading(false);
-      }
+  // -----------------------------------
+  // HANDLE QUERY RESULT
+  // -----------------------------------
+
+  useEffect(() => {
+    if (!authorized) {
+      return;
     }
 
-    if (userId) {
-      loadUser();
+    if (queryError) {
+      console.error(
+        "Unable to load user:",
+        queryError,
+      );
+
+      setError(
+        queryError.message ||
+          "Unable to load user",
+      );
+
+      return;
     }
-  }, [router, userId]);
+
+    if (
+      !loading &&
+      data &&
+      !data.user
+    ) {
+      setNotFound(true);
+    }
+  }, [
+    authorized,
+    data,
+    loading,
+    queryError,
+  ]);
+
+  // -----------------------------------
+  // USER
+  // -----------------------------------
+
+  const user =
+    data?.user || null;
 
   // -----------------------------------
   // ROLE
@@ -129,10 +226,10 @@ export default function ViewUserPage() {
   // -----------------------------------
 
   const groupName =
-    user?.role?.isAdmin
-      ? "System Administration"
-      : user?.role?.group?.name ||
-        "Unassigned";
+  user?.role?.isAdmin
+    ? "System Administration"
+    : user?.role?.group?.name ||
+      "Unassigned";
 
   // -----------------------------------
   // STATUS
@@ -158,7 +255,10 @@ export default function ViewUserPage() {
   // LOADING
   // -----------------------------------
 
-  if (loading) {
+  if (
+    checkingAuth ||
+    loading
+  ) {
     return (
       <DashboardLayout>
         <div className="company-page-loading">
@@ -173,10 +273,29 @@ export default function ViewUserPage() {
   }
 
   // -----------------------------------
+  // ERROR
+  // -----------------------------------
+
+  if (error) {
+    return (
+      <DashboardLayout>
+        <div className="company-users-page">
+          <div className="company-users-error">
+            {error}
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  // -----------------------------------
   // NOT FOUND
   // -----------------------------------
 
-  if (notFound || !user) {
+  if (
+    notFound ||
+    !user
+  ) {
     return (
       <DashboardLayout>
         <div className="company-users-page">
@@ -214,22 +333,6 @@ export default function ViewUserPage() {
             <p className="company-users-empty-text">
               User not found.
             </p>
-          </div>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  // -----------------------------------
-  // ERROR
-  // -----------------------------------
-
-  if (error) {
-    return (
-      <DashboardLayout>
-        <div className="company-users-page">
-          <div className="company-users-error">
-            {error}
           </div>
         </div>
       </DashboardLayout>

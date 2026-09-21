@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import { api } from "@/lib/api";
+import { gql } from "@apollo/client";
+import {
+  useMutation,
+  useQuery,
+} from "@apollo/client/react";
+
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 
 type Permission = {
@@ -21,20 +26,95 @@ type Group = {
   name: string;
   active: boolean;
   permissions: GroupPermission[];
-  roles: any[];
+  roles: {
+    id: number;
+    name: string;
+  }[];
 };
+
+type GroupQueryData = {
+  group: Group;
+};
+
+type GroupQueryVariables = {
+  id: number;
+};
+
+type PermissionsQueryData = {
+  roleAllPermissions: Permission[];
+};
+
+type UpdateGroupMutationData = {
+  updateGroup: {
+    id: number;
+    name: string;
+    active: boolean;
+  };
+};
+
+type UpdateGroupMutationVariables = {
+  id: number;
+  input: {
+    name: string;
+    active: boolean;
+    permissionIds: number[];
+  };
+};
+
+const GROUP_QUERY = gql`
+  query Group($id: Int!) {
+    group(id: $id) {
+      id
+      name
+      active
+
+      permissions {
+        permission {
+          id
+          name
+          parentId
+        }
+      }
+
+      roles {
+        id
+        name
+      }
+    }
+  }
+`;
+
+const ROLE_ALL_PERMISSIONS_QUERY = gql`
+  query RoleAllPermissions {
+    roleAllPermissions {
+      id
+      name
+      parentId
+    }
+  }
+`;
+
+const UPDATE_GROUP_MUTATION = gql`
+  mutation UpdateGroup(
+    $id: Int!
+    $input: UpdateGroupInput!
+  ) {
+    updateGroup(
+      id: $id
+      input: $input
+    ) {
+      id
+      name
+      active
+    }
+  }
+`;
 
 export default function EditGroupPage() {
   const router = useRouter();
   const params = useParams();
 
   const groupId = Number(params.id);
-
-  const [group, setGroup] =
-    useState<Group | null>(null);
-
-  const [permissions, setPermissions] =
-    useState<Permission[]>([]);
 
   const [name, setName] = useState("");
 
@@ -44,71 +124,104 @@ export default function EditGroupPage() {
   const [active, setActive] =
     useState(true);
 
-  const [loading, setLoading] =
-    useState(true);
-
-  const [saving, setSaving] =
-    useState(false);
-
   const [error, setError] =
     useState("");
 
+  const {
+    data: groupData,
+    loading: groupLoading,
+    error: groupQueryError,
+  } = useQuery<
+    GroupQueryData,
+    GroupQueryVariables
+  >(GROUP_QUERY, {
+    variables: {
+      id: groupId,
+    },
+    skip:
+      !groupId ||
+      Number.isNaN(groupId),
+    fetchPolicy: "network-only",
+  });
+
+  const {
+    data: permissionsData,
+    loading: permissionsLoading,
+    error: permissionsQueryError,
+  } = useQuery<PermissionsQueryData>(
+    ROLE_ALL_PERMISSIONS_QUERY,
+    {
+      fetchPolicy: "network-only",
+    },
+  );
+
+  const [
+    updateGroupMutation,
+    {
+      loading: saving,
+    },
+  ] = useMutation<
+    UpdateGroupMutationData,
+    UpdateGroupMutationVariables
+  >(UPDATE_GROUP_MUTATION);
+
+  const group = groupData?.group ?? null;
+
+  const permissions =
+    permissionsData?.roleAllPermissions?.filter(
+      (permission) =>
+        permission.parentId === null,
+    ) || [];
+
   useEffect(() => {
-    if (!groupId || Number.isNaN(groupId)) {
+    if (
+      !groupId ||
+      Number.isNaN(groupId)
+    ) {
       setError("Invalid group ID.");
-      setLoading(false);
       return;
     }
 
-    loadData();
-  }, [groupId]);
-
-  async function loadData() {
-    try {
-      setLoading(true);
-      setError("");
-
-      const [
-        groupResponse,
-        permissionsResponse,
-      ] = await Promise.all([
-        api.get(`/groups/${groupId}`),
-        api.get("/roles/permissions"),
-      ]);
-
-      const loadedGroup: Group =
-        groupResponse.data;
-
-      setGroup(loadedGroup);
-      setName(loadedGroup.name);
-      setActive(loadedGroup.active);
+    if (group) {
+      setName(group.name);
+      setActive(group.active);
 
       setSelectedPermissions(
-        loadedGroup.permissions.map(
-          (item) => item.permission.id,
+        group.permissions.map(
+          (item) =>
+            item.permission.id,
         ),
       );
+    }
+  }, [group, groupId]);
 
-      setPermissions(
-        permissionsResponse.data.filter(
-          (permission: Permission) =>
-            permission.parentId === null,
-        ),
-      );
-    } catch (err: any) {
+  useEffect(() => {
+    if (groupQueryError) {
       console.error(
         "Unable to load group:",
-        err,
+        groupQueryError,
       );
 
       setError(
-        err?.response?.data?.message ||
+        groupQueryError.message ||
           "Unable to load group.",
       );
-    } finally {
-      setLoading(false);
     }
-  }
+  }, [groupQueryError]);
+
+  useEffect(() => {
+    if (permissionsQueryError) {
+      console.error(
+        "Unable to load permissions:",
+        permissionsQueryError,
+      );
+
+      setError(
+        permissionsQueryError.message ||
+          "Unable to load permissions.",
+      );
+    }
+  }, [permissionsQueryError]);
 
   function togglePermission(id: number) {
     setSelectedPermissions((current) =>
@@ -117,7 +230,10 @@ export default function EditGroupPage() {
             (permissionId) =>
               permissionId !== id,
           )
-        : [...current, id],
+        : [
+            ...current,
+            id,
+          ],
     );
   }
 
@@ -135,7 +251,9 @@ export default function EditGroupPage() {
       return;
     }
 
-    if (selectedPermissions.length === 0) {
+    if (
+      selectedPermissions.length === 0
+    ) {
       setError(
         "Select at least one parent permission.",
       );
@@ -143,17 +261,17 @@ export default function EditGroupPage() {
     }
 
     try {
-      setSaving(true);
-
-      await api.patch(
-        `/groups/${groupId}`,
-        {
-          name: name.trim(),
-          active,
-          permissionIds:
-            selectedPermissions,
+      await updateGroupMutation({
+        variables: {
+          id: groupId,
+          input: {
+            name: name.trim(),
+            active,
+            permissionIds:
+              selectedPermissions,
+          },
         },
-      );
+      });
 
       router.replace(
         "/groups?success=updated",
@@ -165,20 +283,24 @@ export default function EditGroupPage() {
       );
 
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to update group.",
       );
-    } finally {
-      setSaving(false);
     }
   }
+
+  const loading =
+    groupLoading ||
+    permissionsLoading;
 
   if (loading) {
     return (
       <DashboardLayout>
         <div className="company-page-loading">
           <div className="company-loading-spinner" />
-          <span>Loading group...</span>
+          <span>
+            Loading group...
+          </span>
         </div>
       </DashboardLayout>
     );
@@ -195,11 +317,13 @@ export default function EditGroupPage() {
                 ACCESS CONTROL
               </div>
 
-              <h1>Edit group</h1>
+              <h1>
+                Edit group
+              </h1>
 
               <p>
-                Update group configuration and
-                permissions.
+                Update group configuration
+                and permissions.
               </p>
             </div>
 
@@ -217,9 +341,8 @@ export default function EditGroupPage() {
           </div>
 
           <div className="company-users-error">
-            {Array.isArray(error)
-              ? error.join(", ")
-              : error || "Group not found."}
+            {error ||
+              "Group not found."}
           </div>
 
         </div>
@@ -239,7 +362,9 @@ export default function EditGroupPage() {
               ACCESS CONTROL
             </div>
 
-            <h1>Edit group</h1>
+            <h1>
+              Edit group
+            </h1>
 
             <p>
               Update {group.name}'s permissions
@@ -265,9 +390,7 @@ export default function EditGroupPage() {
 
         {error && (
           <div className="company-users-error">
-            {Array.isArray(error)
-              ? error.join(", ")
-              : error}
+            {error}
           </div>
         )}
 
@@ -390,7 +513,9 @@ export default function EditGroupPage() {
                         }
                       >
                         <span className="company-groups-permission-check">
-                          {selected ? "✓" : ""}
+                          {selected
+                            ? "✓"
+                            : ""}
                         </span>
 
                         <span className="company-groups-permission-content">
@@ -410,7 +535,9 @@ export default function EditGroupPage() {
               </div>
 
               <div className="company-groups-edit-help">
-                <span>ⓘ</span>
+                <span>
+                  ⓘ
+                </span>
 
                 <span>
                   Groups contain parent permissions

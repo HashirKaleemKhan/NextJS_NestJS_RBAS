@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { api } from "@/lib/api";
+import { gql } from "@apollo/client";
+import { useQuery } from "@apollo/client/react";
+
+import { getUser } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 
 type HierarchyNode = {
@@ -35,6 +38,154 @@ type HierarchyResponse = {
   isAdmin: boolean;
   hierarchy: HierarchyNode[];
 };
+
+type UserHierarchyQueryData = {
+  userHierarchy: HierarchyNode[];
+};
+
+const USER_HIERARCHY_QUERY = gql`
+  query UserHierarchy {
+    userHierarchy {
+      id
+      name
+      email
+      active
+
+      role {
+        id
+        name
+        isAdmin
+        group {
+          id
+          name
+        }
+      }
+
+      managerId
+      isCurrentUser
+
+      children {
+        id
+        name
+        email
+        active
+
+        role {
+          id
+          name
+          isAdmin
+          group {
+            id
+            name
+          }
+        }
+
+        managerId
+        isCurrentUser
+
+        children {
+          id
+          name
+          email
+          active
+
+          role {
+            id
+            name
+            isAdmin
+            group {
+              id
+              name
+            }
+          }
+
+          managerId
+          isCurrentUser
+
+          children {
+            id
+            name
+            email
+            active
+
+            role {
+              id
+              name
+              isAdmin
+              group {
+                id
+                name
+              }
+            }
+
+            managerId
+            isCurrentUser
+
+            children {
+              id
+              name
+              email
+              active
+
+              role {
+                id
+                name
+                isAdmin
+                group {
+                  id
+                  name
+                }
+              }
+
+              managerId
+              isCurrentUser
+
+              children {
+                id
+                name
+                email
+                active
+
+                role {
+                  id
+                  name
+                  isAdmin
+                  group {
+                    id
+                    name
+                  }
+                }
+
+                managerId
+                isCurrentUser
+
+                children {
+                  id
+                  name
+                  email
+                  active
+
+                  role {
+                    id
+                    name
+                    isAdmin
+                    group {
+                      id
+                      name
+                    }
+                  }
+
+                  managerId
+                  isCurrentUser
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
 
 
 /* =========================================================
@@ -303,7 +454,7 @@ function UserCard({
       </div>
     </div>
   );
-} 
+}
 
 
 /* =========================================================
@@ -661,47 +812,74 @@ export default function HierarchyPage() {
 
 
   /* =======================================================
+     GRAPHQL
+     ======================================================= */
+
+  const {
+    data: hierarchyQueryData,
+    loading: hierarchyLoading,
+    error: hierarchyQueryError,
+  } = useQuery<
+    UserHierarchyQueryData
+  >(
+    USER_HIERARCHY_QUERY,
+    {
+      fetchPolicy: "network-only",
+    },
+  );
+
+
+  /* =======================================================
      LOAD HIERARCHY
      ======================================================= */
 
   useEffect(() => {
 
-    async function loadHierarchy() {
-
-      try {
-
-        setError("");
-
-        const response =
-          await api.get(
-            "/users/hierarchy",
-          );
-
-        setData(response.data);
-
-      } catch (err: any) {
-
-        console.error(
-          "Unable to load hierarchy:",
-          err,
-        );
-
-        setError(
-          err?.response?.data
-            ?.message ||
-            "Unable to load hierarchy.",
-        );
-
-      } finally {
-
-        setLoading(false);
-
-      }
+    if (hierarchyLoading) {
+      setLoading(true);
+      return;
     }
 
-    loadHierarchy();
+    if (hierarchyQueryError) {
 
-  }, []);
+      console.error(
+        "Unable to load hierarchy:",
+        hierarchyQueryError,
+      );
+
+      setError(
+        hierarchyQueryError.message ||
+        "Unable to load hierarchy.",
+      );
+
+      setLoading(false);
+
+      return;
+    }
+
+    const user =
+  getUser();
+
+const isAdmin =
+  user?.isAdmin === true;
+
+setData({
+  currentUserId: 0,
+  isAdmin,
+  hierarchy:
+    hierarchyQueryData?.userHierarchy ||
+    [],
+});
+
+    setError("");
+
+    setLoading(false);
+
+  }, [
+    hierarchyQueryData,
+    hierarchyLoading,
+    hierarchyQueryError,
+  ]);
 
 
   /* =======================================================
@@ -900,6 +1078,7 @@ export default function HierarchyPage() {
                 </div>
 
               </div>
+
 
             </div>
 

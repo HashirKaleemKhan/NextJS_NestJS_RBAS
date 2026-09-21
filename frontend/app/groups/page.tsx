@@ -1,18 +1,29 @@
 "use client";
 
 import {
+  Suspense,
   useEffect,
   useRef,
   useState,
 } from "react";
+
 import {
   useRouter,
   useSearchParams,
 } from "next/navigation";
 
-import { api } from "@/lib/api";
+import { gql } from "@apollo/client";
+import {
+  useMutation,
+  useQuery,
+} from "@apollo/client/react";
+
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import ConfirmModal from "@/components/ConfirmModal";
+
+// -----------------------------------
+// TYPES
+// -----------------------------------
 
 type Permission = {
   id: number;
@@ -44,12 +55,92 @@ type Pagination = {
   totalPages: number;
 };
 
-type GroupsResponse = {
-  data: Group[];
-  pagination: Pagination;
+type GroupsQueryData = {
+  groups: {
+    data: Group[];
+    pagination: Pagination;
+  };
 };
 
-export default function GroupsPage() {
+type GroupsQueryVariables = {
+  page?: number;
+  limit?: number;
+  search?: string;
+};
+
+type ToggleGroupStatusData = {
+  toggleGroupStatus: Group;
+};
+
+type DeleteGroupData = {
+  deleteGroup: string;
+};
+
+// -----------------------------------
+// GRAPHQL
+// -----------------------------------
+
+const GROUPS_QUERY = gql`
+  query Groups(
+    $page: Int
+    $limit: Int
+    $search: String
+  ) {
+    groups(
+      page: $page
+      limit: $limit
+      search: $search
+    ) {
+      data {
+        id
+        name
+        active
+
+        permissions {
+          permission {
+            id
+            name
+            parentId
+          }
+        }
+
+        roles {
+          id
+          name
+        }
+      }
+
+      pagination {
+        page
+        limit
+        total
+        totalPages
+      }
+    }
+  }
+`;
+
+const TOGGLE_GROUP_STATUS_MUTATION = gql`
+  mutation ToggleGroupStatus($id: Int!) {
+    toggleGroupStatus(id: $id) {
+      id
+      name
+      active
+    }
+  }
+`;
+
+const DELETE_GROUP_MUTATION = gql`
+  mutation DeleteGroup($id: Int!) {
+    deleteGroup(id: $id)
+  }
+`;
+
+// -----------------------------------
+// PAGE
+// -----------------------------------
+
+function GroupsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -91,6 +182,43 @@ export default function GroupsPage() {
     searchParams.get("success");
 
   // -----------------------------------
+  // GROUPS QUERY
+  // -----------------------------------
+
+  const {
+    data,
+    loading: queryLoading,
+    error: queryError,
+    refetch,
+  } = useQuery<
+    GroupsQueryData,
+    GroupsQueryVariables
+  >(GROUPS_QUERY, {
+    variables: {
+      page: 1,
+      limit: 10,
+      search: "",
+    },
+    fetchPolicy: "network-only",
+  });
+
+  // -----------------------------------
+  // MUTATIONS
+  // -----------------------------------
+
+  const [
+    toggleGroupStatusMutation,
+  ] = useMutation<
+    ToggleGroupStatusData
+  >(TOGGLE_GROUP_STATUS_MUTATION);
+
+  const [
+    deleteGroupMutation,
+  ] = useMutation<DeleteGroupData>(
+    DELETE_GROUP_MUTATION,
+  );
+
+  // -----------------------------------
   // CLEAN UP SEARCH TIMER
   // -----------------------------------
 
@@ -103,65 +231,61 @@ export default function GroupsPage() {
   }, []);
 
   // -----------------------------------
-  // LOAD GROUPS
+  // INITIAL QUERY RESULT
   // -----------------------------------
 
-  async function loadGroups(
-    page: number,
-    searchQuery = search,
-    showInitialLoading = false,
-  ) {
-    try {
-      if (showInitialLoading) {
-        setLoading(true);
-      } else {
-        setPageLoading(true);
-      }
+  useEffect(() => {
+    if (queryLoading) {
+      return;
+    }
 
-      setError("");
-
-      const response =
-        await api.get<GroupsResponse>(
-          "/groups",
-          {
-            params: {
-              page,
-              limit: 10,
-              search: searchQuery.trim(),
-            },
-          },
-        );
-
-      setGroups(
-        Array.isArray(response.data?.data)
-          ? response.data.data
-          : [],
-      );
-
-      setPagination(
-        response.data.pagination,
-      );
-    } catch (err: any) {
-      if (err?.response?.status === 401) {
+    if (queryError) {
+      if (
+        queryError.message
+          ?.toLowerCase()
+          .includes("unauthorized") ||
+        queryError.message
+          ?.toLowerCase()
+          .includes("jwt") ||
+        queryError.message
+          ?.toLowerCase()
+          .includes("authentication")
+      ) {
         router.replace("/login");
         return;
       }
 
       setError(
-        err?.response?.data?.message ||
+        queryError.message ||
           "Unable to load groups.",
       );
-    } finally {
-      if (showInitialLoading) {
-        setLoading(false);
-      } else {
-        setPageLoading(false);
-      }
+
+      setLoading(false);
+      return;
     }
-  }
+
+    if (data?.groups) {
+      setGroups(
+        Array.isArray(data.groups.data)
+          ? data.groups.data
+          : [],
+      );
+
+      setPagination(
+        data.groups.pagination,
+      );
+    }
+
+    setLoading(false);
+  }, [
+    data,
+    queryError,
+    queryLoading,
+    router,
+  ]);
 
   // -----------------------------------
-  // INITIAL LOAD
+  // TOKEN CHECK
   // -----------------------------------
 
   useEffect(() => {
@@ -170,10 +294,7 @@ export default function GroupsPage() {
 
     if (!token) {
       router.replace("/login");
-      return;
     }
-
-    loadGroups(1, "", true);
   }, [router]);
 
   // -----------------------------------
@@ -217,6 +338,65 @@ export default function GroupsPage() {
 
       default:
         return "";
+    }
+  }
+
+  // -----------------------------------
+  // LOAD GROUPS
+  // -----------------------------------
+
+  async function loadGroups(
+    page: number,
+    searchQuery = search,
+  ) {
+    try {
+      setPageLoading(true);
+      setError("");
+
+      const result =
+        await refetch({
+          page,
+          limit: 10,
+          search:
+            searchQuery.trim(),
+        });
+
+      if (result.data?.groups) {
+        setGroups(
+          Array.isArray(
+            result.data.groups.data,
+          )
+            ? result.data.groups.data
+            : [],
+        );
+
+        setPagination(
+          result.data.groups.pagination,
+        );
+      }
+    } catch (err: any) {
+      const message =
+        err?.message ||
+        "Unable to load groups.";
+
+      if (
+        message
+          .toLowerCase()
+          .includes("unauthorized") ||
+        message
+          .toLowerCase()
+          .includes("jwt") ||
+        message
+          .toLowerCase()
+          .includes("authentication")
+      ) {
+        router.replace("/login");
+        return;
+      }
+
+      setError(message);
+    } finally {
+      setPageLoading(false);
     }
   }
 
@@ -295,9 +475,11 @@ export default function GroupsPage() {
       setDeleteLoading(true);
       setError("");
 
-      await api.delete(
-        `/groups/${deleteTarget.id}`,
-      );
+      await deleteGroupMutation({
+        variables: {
+          id: deleteTarget.id,
+        },
+      });
 
       setDeleteTarget(null);
 
@@ -315,7 +497,8 @@ export default function GroupsPage() {
 
       const newTotalPages =
         Math.ceil(
-          newTotal / pagination.limit,
+          newTotal /
+            pagination.limit,
         );
 
       const nextPage =
@@ -335,15 +518,26 @@ export default function GroupsPage() {
         "/groups?success=deleted",
       );
     } catch (err: any) {
-      if (err?.response?.status === 401) {
+      const message =
+        err?.message ||
+        "Unable to delete group.";
+
+      if (
+        message
+          .toLowerCase()
+          .includes("unauthorized") ||
+        message
+          .toLowerCase()
+          .includes("jwt") ||
+        message
+          .toLowerCase()
+          .includes("authentication")
+      ) {
         router.replace("/login");
         return;
       }
 
-      setError(
-        err?.response?.data?.message ||
-          "Unable to delete group.",
-      );
+      setError(message);
     } finally {
       setDeleteLoading(false);
     }
@@ -362,22 +556,31 @@ export default function GroupsPage() {
       const newActiveStatus =
         !group.active;
 
-      await api.patch(
-        `/groups/${group.id}/status`,
-      );
+      const result =
+        await toggleGroupStatusMutation({
+          variables: {
+            id: group.id,
+          },
+        });
 
-      setGroups(
-        (currentGroups) =>
-          currentGroups.map((item) =>
-            item.id === group.id
-              ? {
-                  ...item,
-                  active:
-                    newActiveStatus,
-                }
-              : item,
-          ),
-      );
+      const updatedGroup =
+        result.data?.toggleGroupStatus;
+
+      if (updatedGroup) {
+        setGroups(
+          (currentGroups) =>
+            currentGroups.map(
+              (item) =>
+                item.id === group.id
+                  ? {
+                      ...item,
+                      active:
+                        updatedGroup.active,
+                    }
+                  : item,
+            ),
+        );
+      }
 
       router.replace(
         `/groups?success=${
@@ -387,15 +590,26 @@ export default function GroupsPage() {
         }`,
       );
     } catch (err: any) {
-      if (err?.response?.status === 401) {
+      const message =
+        err?.message ||
+        "Unable to update group status.";
+
+      if (
+        message
+          .toLowerCase()
+          .includes("unauthorized") ||
+        message
+          .toLowerCase()
+          .includes("jwt") ||
+        message
+          .toLowerCase()
+          .includes("authentication")
+      ) {
         router.replace("/login");
         return;
       }
 
-      setError(
-        err?.response?.data?.message ||
-          "Unable to update group status.",
-      );
+      setError(message);
     }
   }
 
@@ -445,7 +659,7 @@ export default function GroupsPage() {
   // LOADING
   // -----------------------------------
 
-  if (loading) {
+  if (loading || queryLoading) {
     return (
       <DashboardLayout>
         <div className="company-page-loading">
@@ -1015,5 +1229,22 @@ export default function GroupsPage() {
         loading={deleteLoading}
       />
     </DashboardLayout>
+  );
+}
+
+export default function GroupsPage() {
+  return (
+    <Suspense
+      fallback={
+        <DashboardLayout>
+          <div className="company-page-loading">
+            <div className="company-loading-spinner" />
+            <span>Loading groups...</span>
+          </div>
+        </DashboardLayout>
+      }
+    >
+      <GroupsPageContent />
+    </Suspense>
   );
 }

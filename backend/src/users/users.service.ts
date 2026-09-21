@@ -493,6 +493,10 @@ return accessibleIds;
 // GET USERS
 // -----------------------------------
 
+// -----------------------------------
+// GET USERS
+// -----------------------------------
+
 async findAll(
   currentUserId: number,
   page = 1,
@@ -588,7 +592,11 @@ async findAll(
         where,
 
         include: {
-          role: true,
+          role: {
+            include: {
+              group: true,
+            },
+          },
 
           manager: {
             select: {
@@ -866,6 +874,45 @@ async findAll(
 
     return user;
   }
+
+  // -----------------------------------
+  // GET ONE USER FOR VIEW PAGE
+  // -----------------------------------
+
+async findOneForView(
+  targetUserId: number,
+) {
+  const user =
+    await this.prisma.user.findUnique({
+      where: {
+        id: targetUserId,
+      },
+
+      include: {
+        role: {
+          include: {
+            group: true,
+            reportsToRole: true,
+          },
+        },
+
+        manager: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+  if (!user) {
+    throw new NotFoundException(
+      "User not found",
+    );
+  }
+
+  return user;
+}
 
   // -----------------------------------
   // GET POSSIBLE MANAGERS

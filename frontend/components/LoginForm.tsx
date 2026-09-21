@@ -1,13 +1,59 @@
 "use client";
 
 import { useState } from "react";
-import { api } from "@/lib/api";
+
+import { gql } from "@apollo/client";
+import { useMutation } from "@apollo/client/react";
+
 import { getUser } from "@/lib/auth";
 import { useRouter } from "next/navigation";
-import axios from "axios";
+
+const LOGIN_MUTATION = gql`
+  mutation Login($input: LoginInput!) {
+    login(input: $input) {
+      accessToken
+      user {
+        id
+        name
+        email
+        role
+        permissions
+        isAdmin
+        active
+      }
+    }
+  }
+`;
+
+type LoginMutationData = {
+  login: {
+    accessToken: string;
+    user: {
+      id: number;
+      name: string;
+      email: string;
+      role: string;
+      permissions: string[];
+      isAdmin: boolean;
+      active: boolean | null;
+    };
+  };
+};
+
+type LoginMutationVariables = {
+  input: {
+    email: string;
+    password: string;
+  };
+};
 
 export default function LoginForm() {
   const router = useRouter();
+
+  const [loginMutation] = useMutation<
+    LoginMutationData,
+    LoginMutationVariables
+  >(LOGIN_MUTATION);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -30,20 +76,34 @@ export default function LoginForm() {
     setLoading(true);
 
     try {
-      const { data } = await api.post("/auth/login", {
-        email: email.trim(),
-        password,
+      const result = await loginMutation({
+        variables: {
+          input: {
+            email: email.trim(),
+            password,
+          },
+        },
       });
+
+      const loginData = result.data?.login;
+
+      if (!loginData?.accessToken) {
+        throw new Error(
+          "Unable to sign in. Please try again.",
+        );
+      }
 
       localStorage.setItem(
         "token",
-        data.accessToken,
+        loginData.accessToken,
       );
 
       const user = getUser();
 
       const permissions =
-        user?.permissions || [];
+        user?.permissions ||
+        loginData.user.permissions ||
+        [];
 
       if (permissions.includes("dashboard.view")) {
         router.push("/dashboard");
@@ -58,22 +118,13 @@ export default function LoginForm() {
       } else {
         router.push("/access-denied");
       }
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        const message =
-          error.response?.data?.message ||
-          "Unable to sign in. Please check your credentials and try again.";
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to sign in. Please check your credentials and try again.";
 
-        setError(
-          Array.isArray(message)
-            ? message.join(", ")
-            : message,
-        );
-      } else {
-        setError(
-          "Unable to sign in. Please try again.",
-        );
-      }
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -149,7 +200,10 @@ export default function LoginForm() {
               value={email}
               onChange={(e) => {
                 setEmail(e.target.value);
-                if (error) setError("");
+
+                if (error) {
+                  setError("");
+                }
               }}
               disabled={loading}
               autoComplete="email"
@@ -179,7 +233,10 @@ export default function LoginForm() {
               value={password}
               onChange={(e) => {
                 setPassword(e.target.value);
-                if (error) setError("");
+
+                if (error) {
+                  setError("");
+                }
               }}
               disabled={loading}
               autoComplete="current-password"

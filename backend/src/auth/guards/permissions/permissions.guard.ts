@@ -6,7 +6,11 @@ import {
 
 import { Reflector } from "@nestjs/core";
 
-import { Permissions } from "../../../common/decorators/permissions.decorator";
+import { GqlExecutionContext } from "@nestjs/graphql";
+
+import {
+  PERMISSIONS_KEY,
+} from "../../../common/decorators/permissions.decorator";
 
 @Injectable()
 export class PermissionsGuard
@@ -20,8 +24,10 @@ export class PermissionsGuard
     context: ExecutionContext,
   ): boolean {
     const requiredPermissions =
-      this.reflector.getAllAndOverride<string[]>(
-        Permissions,
+      this.reflector.getAllAndOverride<
+        string[]
+      >(
+        PERMISSIONS_KEY,
         [
           context.getHandler(),
           context.getClass(),
@@ -36,10 +42,38 @@ export class PermissionsGuard
       return true;
     }
 
-    const request =
-      context.switchToHttp().getRequest();
+    let request: any;
 
-    const user = request.user;
+    // -----------------------------------
+    // GRAPHQL
+    // -----------------------------------
+
+    if (
+      context.getType<
+        "http" | "graphql"
+      >() === "graphql"
+    ) {
+      const gqlContext =
+        GqlExecutionContext.create(
+          context,
+        );
+
+      request =
+        gqlContext.getContext()?.req;
+    }
+
+    // -----------------------------------
+    // REST / HTTP
+    // -----------------------------------
+
+    else {
+      request =
+        context
+          .switchToHttp()
+          .getRequest();
+    }
+
+    const user = request?.user;
 
     if (!user) {
       return false;
@@ -62,7 +96,9 @@ export class PermissionsGuard
 
     return requiredPermissions.some(
       (permission) =>
-        userPermissions.includes(permission),
+        userPermissions.includes(
+          permission,
+        ),
     );
   }
 }

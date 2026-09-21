@@ -3,9 +3,100 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { api } from "@/lib/api";
+import { gql } from "@apollo/client";
+import {
+  useMutation,
+  useQuery,
+} from "@apollo/client/react";
+
 import { getUser } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
+
+// -----------------------------------
+// GRAPHQL
+// -----------------------------------
+
+const ROLES_QUERY = gql`
+  query RolesForCreateUser(
+    $page: Int
+    $limit: Int
+  ) {
+    roles(
+      page: $page
+      limit: $limit
+    ) {
+      data {
+        id
+        name
+        isAdmin
+        active
+        groupId
+        reportsToRoleId
+        group {
+          id
+          name
+          active
+        }
+        reportsToRole {
+          id
+          name
+          isAdmin
+          active
+        }
+      }
+    }
+  }
+`;
+
+const POSSIBLE_MANAGERS_FOR_ROLE_QUERY = gql`
+  query PossibleManagersForRole(
+    $roleId: Int!
+  ) {
+    possibleManagersForRole(
+      roleId: $roleId
+    ) {
+      id
+      name
+      email
+      role {
+        id
+        name
+        level
+        active
+      }
+    }
+  }
+`;
+
+const CREATE_USER_MUTATION = gql`
+  mutation CreateUser(
+    $input: CreateUserInput!
+  ) {
+    createUser(input: $input) {
+      id
+      name
+      email
+      active
+      roleId
+      managerId
+      groupId
+      role {
+        id
+        name
+        level
+        active
+      }
+      manager {
+        id
+        name
+      }
+    }
+  }
+`;
+
+// -----------------------------------
+// TYPES
+// -----------------------------------
 
 type Group = {
   id: number;
@@ -40,9 +131,9 @@ type Manager = {
   role?: {
     id: number;
     name: string;
-    isAdmin: boolean;
-    active: boolean;
-  };
+    level?: number | null;
+    active?: boolean | null;
+  } | null;
 };
 
 type CurrentUser = {
@@ -51,6 +142,51 @@ type CurrentUser = {
   role?: string;
   permissions?: string[];
 };
+
+type RolesQueryData = {
+  roles: {
+    data: Role[];
+  };
+};
+
+type RolesQueryVariables = {
+  page?: number;
+  limit?: number;
+};
+
+type ManagersQueryData = {
+  possibleManagersForRole: Manager[];
+};
+
+type ManagersQueryVariables = {
+  roleId: number;
+};
+
+type CreateUserMutationData = {
+  createUser: {
+    id: number;
+    name: string;
+    email: string;
+    active: boolean;
+    roleId: number;
+    managerId: number | null;
+    groupId: number | null;
+  };
+};
+
+type CreateUserMutationVariables = {
+  input: {
+    name: string;
+    email: string;
+    password: string;
+    roleId: number;
+    managerId: number | null;
+  };
+};
+
+// -----------------------------------
+// PAGE
+// -----------------------------------
 
 export default function CreateUserPage() {
   const router = useRouter();
@@ -101,21 +237,14 @@ export default function CreateUserPage() {
     useState<Role | null>(null);
 
   // -----------------------------------
-  // LOADING
+  // LOADING / ERROR
   // -----------------------------------
 
   const [loading, setLoading] =
     useState(false);
 
-  const [loadingRoles, setLoadingRoles] =
-    useState(true);
-
   const [loadingManagers, setLoadingManagers] =
     useState(false);
-
-  // -----------------------------------
-  // ERROR
-  // -----------------------------------
 
   const [error, setError] =
     useState("");
@@ -158,87 +287,166 @@ export default function CreateUserPage() {
   // LOAD ROLES
   // -----------------------------------
 
-  // -----------------------------------
-// LOAD ROLES
-// -----------------------------------
+  const {
+    data: rolesData,
+    loading: rolesLoading,
+    error: rolesError,
+  } = useQuery<
+    RolesQueryData,
+    RolesQueryVariables
+  >(ROLES_QUERY, {
+    variables: {
+      page: 1,
+      limit: 100,
+    },
+    skip: !authorized,
+    fetchPolicy: "network-only",
+  });
 
-useEffect(() => {
-  if (!authorized) {
-    return;
-  }
+  useEffect(() => {
+    if (!authorized) {
+      return;
+    }
 
-  async function loadRoles() {
-    setLoadingRoles(true);
-    setError("");
-
-    try {
-      const response =
-        await api.get<{
-          data: Role[];
-          pagination: {
-            page: number;
-            limit: number;
-            total: number;
-            totalPages: number;
-          };
-        }>("/roles", {
-          params: {
-            page: 1,
-            limit: 100,
-          },
-        });
-
-      /*
-       * /roles is now paginated.
-       *
-       * This page does not display the Roles
-       * list itself. It only needs Roles as
-       * lookup data for the role selector.
-       *
-       * Admin roles are excluded because
-       * the backend does not allow the current
-       * user to create another Admin.
-       *
-       * Backend remains the final authority.
-       */
-
-      const availableRoles =
-        response.data.data
-          .filter(
-            (role) =>
-              !role.isAdmin &&
-              role.active,
-          )
-          .sort(
-            (a, b) =>
-              a.name.localeCompare(
-                b.name,
-              ),
-          );
-
-      setRoles(availableRoles);
-    } catch (err: any) {
+    if (rolesError) {
       console.error(
         "Unable to load roles:",
-        err,
+        rolesError,
       );
-
-      if (err?.response?.status === 401) {
-        router.replace("/login");
-        return;
-      }
 
       setError(
-        err?.response?.data?.message ||
+        rolesError.message ||
           "Unable to load available roles.",
       );
-    } finally {
-      setLoadingRoles(false);
-    }
-  }
 
-  loadRoles();
-}, [authorized, router]);
+      return;
+    }
+
+    if (!rolesData?.roles?.data) {
+      return;
+    }
+
+    /*
+     * This page only needs Roles as lookup
+     * data for the role selector.
+     *
+     * Admin roles are excluded because the
+     * backend does not allow the current user
+     * to create another Admin.
+     *
+     * Backend remains the final authority.
+     */
+
+    const availableRoles =
+      rolesData.roles.data
+        .filter(
+          (role) =>
+            !role.isAdmin &&
+            role.active,
+        )
+        .sort(
+          (a, b) =>
+            a.name.localeCompare(
+              b.name,
+            ),
+        );
+
+    setRoles(availableRoles);
+  }, [
+    authorized,
+    rolesData,
+    rolesError,
+  ]);
+
+  // -----------------------------------
+  // LOAD POSSIBLE MANAGERS
+  // -----------------------------------
+
+  const {
+    data: managersData,
+    loading: managersQueryLoading,
+    error: managersError,
+  } = useQuery<
+    ManagersQueryData,
+    ManagersQueryVariables
+  >(
+    POSSIBLE_MANAGERS_FOR_ROLE_QUERY,
+    {
+      variables: {
+        roleId: Number(roleId),
+      },
+      skip:
+        !authorized ||
+        !roleId ||
+        selectedRole?.isAdmin === true ||
+        selectedRole?.reportsToRoleId === null,
+      fetchPolicy: "network-only",
+    },
+  );
+
+  useEffect(() => {
+    if (
+      !authorized ||
+      !roleId ||
+      !selectedRole ||
+      selectedRole.isAdmin ||
+      selectedRole.reportsToRoleId === null
+    ) {
+      setPossibleManagers([]);
+      setManagerId("");
+      setLoadingManagers(false);
+      return;
+    }
+
+    setLoadingManagers(
+      managersQueryLoading,
+    );
+
+    if (managersError) {
+      console.error(
+        "Unable to load managers:",
+        managersError,
+      );
+
+      setPossibleManagers([]);
+      setManagerId("");
+
+      setError(
+        managersError.message ||
+          "Unable to load possible managers.",
+      );
+
+      return;
+    }
+
+    if (managersData) {
+      setPossibleManagers(
+        managersData.possibleManagersForRole ||
+          [],
+      );
+    }
+  }, [
+    authorized,
+    roleId,
+    selectedRole,
+    managersData,
+    managersQueryLoading,
+    managersError,
+  ]);
+
+  // -----------------------------------
+  // CREATE USER MUTATION
+  // -----------------------------------
+
+  const [
+    createUserMutation,
+    {
+      loading: createUserLoading,
+    },
+  ] = useMutation<
+    CreateUserMutationData,
+    CreateUserMutationVariables
+  >(CREATE_USER_MUTATION);
 
   // -----------------------------------
   // HANDLE ROLE CHANGE
@@ -264,51 +472,6 @@ useEffect(() => {
 
     setSelectedRole(role);
   }
-
-  // -----------------------------------
-  // LOAD POSSIBLE MANAGERS
-  // -----------------------------------
-
-  useEffect(() => {
-    if (!authorized || !roleId) {
-      setPossibleManagers([]);
-      setManagerId("");
-      return;
-    }
-
-    async function loadManagers() {
-      setLoadingManagers(true);
-      setError("");
-      setManagerId("");
-
-      try {
-        const response =
-          await api.get<Manager[]>(
-            `/users/possible-managers-for-role/${roleId}`,
-          );
-
-        setPossibleManagers(
-          response.data,
-        );
-      } catch (err: any) {
-        console.error(
-          "Unable to load managers:",
-          err,
-        );
-
-        setPossibleManagers([]);
-
-        setError(
-          err?.response?.data?.message ||
-            "Unable to load possible managers.",
-        );
-      } finally {
-        setLoadingManagers(false);
-      }
-    }
-
-    loadManagers();
-  }, [authorized, roleId]);
 
   // -----------------------------------
   // CREATE USER
@@ -413,40 +576,45 @@ useEffect(() => {
     setLoading(true);
 
     try {
-      await api.post("/users", {
-        name: name.trim(),
+      await createUserMutation({
+        variables: {
+          input: {
+            name: name.trim(),
 
-        email: email
-          .trim()
-          .toLowerCase(),
+            email: email
+              .trim()
+              .toLowerCase(),
 
-        password,
+            password,
 
-        roleId: Number(roleId),
+            roleId: Number(roleId),
 
-        managerId:
-          selectedRole.isAdmin
-            ? null
-            : managerId
-              ? Number(managerId)
-              : null,
+            managerId:
+              selectedRole.isAdmin
+                ? null
+                : managerId
+                  ? Number(managerId)
+                  : null,
+          },
+        },
       });
 
-      router.replace("/users?success=created");
+      router.replace(
+        "/users?success=created",
+      );
     } catch (err: any) {
-      const message =
-        err?.response?.data?.message;
+      console.error(
+        "Unable to create user:",
+        err,
+      );
 
-      if (Array.isArray(message)) {
-        setError(
-          message.join(", "),
-        );
-      } else {
-        setError(
-          message ||
-            "Unable to create user.",
-        );
-      }
+      const message =
+        err?.message;
+
+      setError(
+        message ||
+          "Unable to create user.",
+      );
     } finally {
       setLoading(false);
     }
@@ -614,7 +782,7 @@ useEffect(() => {
                     Role
                   </label>
 
-                  {loadingRoles ? (
+                  {rolesLoading ? (
                     <div className="company-create-form-readonly">
                       Loading roles...
                     </div>
@@ -837,11 +1005,13 @@ useEffect(() => {
                   className="company-primary-button"
                   disabled={
                     loading ||
-                    loadingRoles ||
-                    loadingManagers
+                    rolesLoading ||
+                    loadingManagers ||
+                    createUserLoading
                   }
                 >
-                  {loading
+                  {loading ||
+                  createUserLoading
                     ? "Creating..."
                     : "Create User"}
                 </button>

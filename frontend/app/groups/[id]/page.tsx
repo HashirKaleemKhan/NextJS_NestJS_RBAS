@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import { api } from "@/lib/api";
+import { gql } from "@apollo/client";
+import { useQuery } from "@apollo/client/react";
+
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 
 type Permission = {
@@ -19,7 +20,6 @@ type GroupPermission = {
 type Role = {
   id: number;
   name: string;
-  level: number;
   isAdmin: boolean;
   active: boolean;
 };
@@ -32,67 +32,68 @@ type Group = {
   roles: Role[];
 };
 
+type GroupQueryData = {
+  group: Group;
+};
+
+type GroupQueryVariables = {
+  id: number;
+};
+
+const GROUP_QUERY = gql`
+  query Group($id: Int!) {
+    group(id: $id) {
+      id
+      name
+      active
+
+      permissions {
+        permission {
+          id
+          name
+          parentId
+        }
+      }
+
+      roles {
+        id
+        name
+        isAdmin
+        active
+      }
+    }
+  }
+`;
+
 export default function ViewGroupPage() {
   const router = useRouter();
   const params = useParams();
 
   const groupId = Number(params.id);
 
-  const [group, setGroup] =
-    useState<Group | null>(null);
+  const {
+    data,
+    loading,
+    error,
+  } = useQuery<
+    GroupQueryData,
+    GroupQueryVariables
+  >(GROUP_QUERY, {
+    variables: {
+      id: groupId,
+    },
+    skip:
+      !groupId ||
+      Number.isNaN(groupId),
+    fetchPolicy: "network-only",
+  });
 
-  const [loading, setLoading] =
-    useState(true);
+  const group = data?.group ?? null;
 
-  const [error, setError] =
-    useState("");
-
-  useEffect(() => {
-    if (!groupId || Number.isNaN(groupId)) {
-      setError("Invalid group ID.");
-      setLoading(false);
-      return;
-    }
-
-    loadGroup();
-  }, [groupId]);
-
-  async function loadGroup() {
-    try {
-      setLoading(true);
-      setError("");
-
-      const response =
-        await api.get(`/groups/${groupId}`);
-
-      setGroup(response.data);
-    } catch (err: any) {
-      console.error(
-        "Unable to load group:",
-        err,
-      );
-
-      setError(
-        err?.response?.data?.message ||
-          "Unable to load group.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  if (loading) {
-    return (
-      <DashboardLayout>
-        <div className="company-page-loading">
-          <div className="company-loading-spinner" />
-          <span>Loading group...</span>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  if (!group) {
+  if (
+    !groupId ||
+    Number.isNaN(groupId)
+  ) {
     return (
       <DashboardLayout>
         <div className="company-groups-view-page">
@@ -103,7 +104,9 @@ export default function ViewGroupPage() {
                 ACCESS CONTROL
               </div>
 
-              <h1>View group</h1>
+              <h1>
+                View group
+              </h1>
 
               <p>
                 Review group configuration and
@@ -125,7 +128,65 @@ export default function ViewGroupPage() {
           </div>
 
           <div className="company-users-error">
-            {error || "Group not found."}
+            Invalid group ID.
+          </div>
+
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="company-page-loading">
+          <div className="company-loading-spinner" />
+
+          <span>
+            Loading group...
+          </span>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (error || !group) {
+    return (
+      <DashboardLayout>
+        <div className="company-groups-view-page">
+
+          <div className="company-page-header">
+            <div>
+              <div className="company-page-eyebrow">
+                ACCESS CONTROL
+              </div>
+
+              <h1>
+                View group
+              </h1>
+
+              <p>
+                Review group configuration and
+                assigned permissions.
+              </p>
+            </div>
+
+            <div className="company-page-actions">
+              <button
+                type="button"
+                className="company-secondary-button"
+                onClick={() =>
+                  router.push("/groups")
+                }
+              >
+                ← Back to groups
+              </button>
+            </div>
+          </div>
+
+          <div className="company-users-error">
+            {error?.message ||
+              "Group not found."}
           </div>
 
         </div>
@@ -136,7 +197,8 @@ export default function ViewGroupPage() {
   const parentPermissions =
     group.permissions || [];
 
-  const roles = group.roles || [];
+  const roles =
+    group.roles || [];
 
   return (
     <DashboardLayout>
@@ -150,7 +212,9 @@ export default function ViewGroupPage() {
               ACCESS CONTROL
             </div>
 
-            <h1>View group</h1>
+            <h1>
+              View group
+            </h1>
 
             <p>
               Review {group.name}'s permissions,
@@ -196,7 +260,9 @@ export default function ViewGroupPage() {
             </div>
 
             <div className="company-user-stat-content">
-              <span>Group</span>
+              <span>
+                Group
+              </span>
 
               <strong>
                 {group.name}
@@ -210,6 +276,7 @@ export default function ViewGroupPage() {
           </div>
 
           <div className="company-user-stat-card">
+
             <div
               className={`company-user-stat-icon ${
                 group.active
@@ -217,14 +284,21 @@ export default function ViewGroupPage() {
                   : "company-user-stat-icon-red"
               }`}
             >
-              {group.active ? "✓" : "!"}
+              {group.active
+                ? "✓"
+                : "!"}
             </div>
 
             <div className="company-user-stat-content">
-              <span>Status</span>
+
+              <span>
+                Status
+              </span>
 
               <strong>
-                {group.active ? "Active" : "Inactive"}
+                {group.active
+                  ? "Active"
+                  : "Inactive"}
               </strong>
 
               <small>
@@ -232,7 +306,9 @@ export default function ViewGroupPage() {
                   ? "Available for role assignment"
                   : "Currently unavailable for Role assignment"}
               </small>
+
             </div>
+
           </div>
 
           <div className="company-user-stat-card">
@@ -242,7 +318,10 @@ export default function ViewGroupPage() {
             </div>
 
             <div className="company-user-stat-content">
-              <span>Roles</span>
+
+              <span>
+                Roles
+              </span>
 
               <strong>
                 {roles.length}
@@ -253,6 +332,7 @@ export default function ViewGroupPage() {
                   ? "Role assigned to this group"
                   : "Roles assigned to this group"}
               </small>
+
             </div>
 
           </div>
@@ -270,6 +350,7 @@ export default function ViewGroupPage() {
             </div>
 
             <div>
+
               <div className="company-panel-eyebrow">
                 GROUP CONFIGURATION
               </div>
@@ -282,6 +363,7 @@ export default function ViewGroupPage() {
                 Details about this access-control
                 group.
               </p>
+
             </div>
 
           </div>
@@ -321,12 +403,16 @@ export default function ViewGroupPage() {
               {group.active ? (
                 <span className="company-status-badge company-status-active">
                   <span className="company-status-dot" />
-                  <span>Active</span>
+                  <span>
+                    Active
+                  </span>
                 </span>
               ) : (
                 <span className="company-status-badge company-status-inactive">
                   <span className="company-status-dot" />
-                  <span>Inactive</span>
+                  <span>
+                    Inactive
+                  </span>
                 </span>
               )}
 
@@ -347,6 +433,7 @@ export default function ViewGroupPage() {
             </div>
 
             <div>
+
               <div className="company-panel-eyebrow">
                 ACCESS CONTROL
               </div>
@@ -359,6 +446,7 @@ export default function ViewGroupPage() {
                 Application areas available
                 through this group.
               </p>
+
             </div>
 
           </div>
@@ -367,6 +455,7 @@ export default function ViewGroupPage() {
 
             {parentPermissions.length === 0 ? (
               <div className="company-groups-view-empty">
+
                 <div className="company-groups-view-empty-icon">
                   —
                 </div>
@@ -379,6 +468,7 @@ export default function ViewGroupPage() {
                   This group currently has no
                   parent permissions.
                 </span>
+
               </div>
             ) : (
               <div className="company-groups-view-permissions">
@@ -401,11 +491,13 @@ export default function ViewGroupPage() {
                         key={permission.id}
                         className="company-groups-view-permission"
                       >
+
                         <span className="company-groups-view-permission-check">
                           ✓
                         </span>
 
                         <div>
+
                           <strong>
                             {label}
                           </strong>
@@ -413,7 +505,9 @@ export default function ViewGroupPage() {
                           <small>
                             {permission.name}
                           </small>
+
                         </div>
+
                       </div>
                     );
                   },
@@ -437,6 +531,7 @@ export default function ViewGroupPage() {
             </div>
 
             <div>
+
               <div className="company-panel-eyebrow">
                 ROLE ASSIGNMENTS
               </div>
@@ -449,6 +544,7 @@ export default function ViewGroupPage() {
                 Roles currently associated with
                 this group.
               </p>
+
             </div>
 
           </div>
@@ -457,6 +553,7 @@ export default function ViewGroupPage() {
 
             {roles.length === 0 ? (
               <div className="company-groups-view-empty">
+
                 <div className="company-groups-view-empty-icon">
                   —
                 </div>
@@ -469,62 +566,67 @@ export default function ViewGroupPage() {
                   No roles currently use this
                   group.
                 </span>
+
               </div>
             ) : (
               <div className="company-groups-view-roles">
 
-                {roles.map((role) => (
-                  <div
-                    key={role.id}
-                    className="company-groups-view-role"
-                  >
+                {roles.map(
+                  (role) => (
+                    <div
+                      key={role.id}
+                      className="company-groups-view-role"
+                    >
 
-                    <div className="company-groups-view-role-icon">
-                      ◆
+                      <div className="company-groups-view-role-icon">
+                        ◆
+                      </div>
+
+                      <div className="company-groups-view-role-details">
+
+                        <strong>
+                          {role.name}
+                        </strong>
+
+                        <small>
+                          Role ID #{role.id}
+                        </small>
+
+                      </div>
+
+                      <div className="company-groups-view-role-meta">
+
+                        {role.isAdmin ? (
+                          <span className="company-role-badge company-role-badge-blue">
+                            Admin
+                          </span>
+                        ) : (
+                          <span className="company-role-badge company-role-badge-blue">
+                            Role
+                          </span>
+                        )}
+
+                        {role.active ? (
+                          <span className="company-status-badge company-status-active">
+                            <span className="company-status-dot" />
+                            <span>
+                              Active
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="company-status-badge company-status-inactive">
+                            <span className="company-status-dot" />
+                            <span>
+                              Inactive
+                            </span>
+                          </span>
+                        )}
+
+                      </div>
+
                     </div>
-
-                    <div className="company-groups-view-role-details">
-
-                      <strong>
-                        {role.name}
-                      </strong>
-
-                      <small>
-                        Role ID #{role.id}
-                        {" • "}
-                        Level {role.level}
-                      </small>
-
-                    </div>
-
-                    <div className="company-groups-view-role-meta">
-
-                      {role.isAdmin ? (
-                        <span className="company-role-badge company-role-badge-blue">
-                          Admin
-                        </span>
-                      ) : (
-                        <span className="company-role-badge company-role-badge-blue">
-                          Role
-                        </span>
-                      )}
-
-                      {role.active ? (
-                        <span className="company-status-badge company-status-active">
-                          <span className="company-status-dot" />
-                          <span>Active</span>
-                        </span>
-                      ) : (
-                        <span className="company-status-badge company-status-inactive">
-                          <span className="company-status-dot" />
-                          <span>Inactive</span>
-                        </span>
-                      )}
-
-                    </div>
-
-                  </div>
-                ))}
+                  ),
+                )}
 
               </div>
             )}

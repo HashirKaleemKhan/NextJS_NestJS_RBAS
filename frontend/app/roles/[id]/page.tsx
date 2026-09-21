@@ -1,9 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import {
+  useEffect,
+  useMemo,
+} from "react";
+import {
+  useParams,
+  useRouter,
+} from "next/navigation";
 
-import { api } from "@/lib/api";
+import { gql } from "@apollo/client";
+import { useQuery } from "@apollo/client/react";
+
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 
 type Permission = {
@@ -30,7 +38,6 @@ type Group = {
 type Role = {
   id: number;
   name: string;
-  level: number;
   isAdmin: boolean;
   active: boolean;
   groupId: number | null;
@@ -44,55 +51,117 @@ type Role = {
   permissions?: RolePermission[];
 };
 
+type RoleQueryData = {
+  role: Role;
+};
+
+type RoleQueryVariables = {
+  id: number;
+};
+
+const ROLE_QUERY = gql`
+  query Role($id: Int!) {
+    role(id: $id) {
+      id
+      name
+      isAdmin
+      active
+      groupId
+      reportsToRoleId
+
+      group {
+        id
+        name
+        active
+      }
+
+      reportsToRole {
+        id
+        name
+      }
+
+      users {
+        id
+        name
+        email
+      }
+
+      permissions {
+        permission {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
+
 export default function ViewRolePage() {
   const params = useParams();
   const router = useRouter();
 
   const roleId = Number(params.id);
 
-  const [role, setRole] = useState<Role | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const {
+    data,
+    loading,
+    error: queryError,
+  } = useQuery<
+    RoleQueryData,
+    RoleQueryVariables
+  >(ROLE_QUERY, {
+    variables: {
+      id: roleId,
+    },
+    skip: !Number.isFinite(roleId),
+    fetchPolicy: "network-only",
+  });
+
+  const role = data?.role ?? null;
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
+    const token =
+      localStorage.getItem("token");
 
     if (!token) {
+      router.replace("/login");
+    }
+  }, [router]);
+
+  useEffect(() => {
+    if (!queryError) {
+      return;
+    }
+
+    const message =
+      queryError.message || "";
+
+    const lowerMessage =
+      message.toLowerCase();
+
+    if (
+      lowerMessage.includes(
+        "unauthorized",
+      ) ||
+      lowerMessage.includes(
+        "unauthenticated",
+      )
+    ) {
       router.replace("/login");
       return;
     }
 
-    async function loadRole() {
-      try {
-        setLoading(true);
-        setError("");
-
-        const response =
-          await api.get<Role>(`/roles/${roleId}`);
-
-        setRole(response.data);
-      } catch (err: any) {
-        if (err?.response?.status === 401) {
-          router.replace("/login");
-          return;
-        }
-
-        setError(
-          err?.response?.data?.message ||
-            "Unable to load role.",
-        );
-      } finally {
-        setLoading(false);
-      }
+    if (
+      lowerMessage.includes(
+        "forbidden",
+      ) ||
+      lowerMessage.includes(
+        "not allowed",
+      )
+    ) {
+      router.replace("/dashboard");
     }
-
-    if (Number.isFinite(roleId)) {
-      loadRole();
-    } else {
-      setLoading(false);
-      setError("Invalid role.");
-    }
-  }, [roleId, router]);
+  }, [queryError, router]);
 
   const groupedPermissions = useMemo(() => {
     if (!role?.permissions) {
@@ -101,10 +170,14 @@ export default function ViewRolePage() {
 
     return role.permissions.reduce(
       (
-        groups: Record<string, Permission[]>,
+        groups: Record<
+          string,
+          Permission[]
+        >,
         item,
       ) => {
-        const permission = item.permission;
+        const permission =
+          item.permission;
 
         const resource =
           permission.name.includes(".")
@@ -115,7 +188,9 @@ export default function ViewRolePage() {
           groups[resource] = [];
         }
 
-        groups[resource].push(permission);
+        groups[resource].push(
+          permission,
+        );
 
         return groups;
       },
@@ -129,7 +204,9 @@ export default function ViewRolePage() {
         <div className="company-page-loading">
           <div className="company-loading-spinner" />
 
-          <span>Loading role...</span>
+          <span>
+            Loading role...
+          </span>
         </div>
       </DashboardLayout>
     );
@@ -145,10 +222,13 @@ export default function ViewRolePage() {
                 ACCESS MANAGEMENT
               </div>
 
-              <h1>Role not found</h1>
+              <h1>
+                Role not found
+              </h1>
 
               <p>
-                The requested role could not be found.
+                The requested role could
+                not be found.
               </p>
             </div>
 
@@ -156,16 +236,19 @@ export default function ViewRolePage() {
               <button
                 type="button"
                 className="company-secondary-button"
-                onClick={() => router.push("/roles")}
+                onClick={() =>
+                  router.push("/roles")
+                }
               >
                 ← Back to Roles
               </button>
             </div>
           </div>
 
-          {error && (
+          {queryError && (
             <div className="company-users-error">
-              {error}
+              {queryError.message ||
+                "Unable to load role."}
             </div>
           )}
         </div>
@@ -191,8 +274,9 @@ export default function ViewRolePage() {
             <h1>{role.name}</h1>
 
             <p>
-              View role information, reporting
-              relationships, assigned users, and
+              View role information,
+              reporting relationships,
+              assigned users, and
               permissions.
             </p>
           </div>
@@ -201,7 +285,9 @@ export default function ViewRolePage() {
             <button
               type="button"
               className="company-secondary-button"
-              onClick={() => router.push("/roles")}
+              onClick={() =>
+                router.push("/roles")
+              }
             >
               ← Back to Roles
             </button>
@@ -228,11 +314,14 @@ export default function ViewRolePage() {
                   ROLE DETAILS
                 </div>
 
-                <h2>Role Information</h2>
+                <h2>
+                  Role Information
+                </h2>
 
                 <p>
-                  Basic configuration and hierarchy
-                  information for this role.
+                  Basic configuration and
+                  hierarchy information for
+                  this role.
                 </p>
               </div>
 
@@ -253,23 +342,19 @@ export default function ViewRolePage() {
 
             <div className="company-role-view-details">
               <div className="company-role-view-detail">
-                <span>Role Name</span>
-
-                <strong>{role.name}</strong>
-              </div>
-
-              {/* <div className="company-role-view-detail">
-                <span>Role Level</span>
+                <span>
+                  Role Name
+                </span>
 
                 <strong>
-                  {role.isAdmin
-                    ? "Administrator"
-                    : `Level ${role.level}`}
+                  {role.name}
                 </strong>
-              </div> */}
+              </div>
 
               <div className="company-role-view-detail">
-                <span>Group</span>
+                <span>
+                  Group
+                </span>
 
                 {role.isAdmin ? (
                   <span className="company-admin-group-badge">
@@ -284,7 +369,9 @@ export default function ViewRolePage() {
               </div>
 
               <div className="company-role-view-detail">
-                <span>Reports To</span>
+                <span>
+                  Reports To
+                </span>
 
                 <strong
                   className={
@@ -296,13 +383,17 @@ export default function ViewRolePage() {
                   {role.isAdmin
                     ? "Unassigned"
                     : role.reportsToRole
-                      ? role.reportsToRole.name
+                      ? role
+                          .reportsToRole
+                          .name
                       : "Unassigned"}
                 </strong>
               </div>
 
               <div className="company-role-view-detail">
-                <span>Assigned Users</span>
+                <span>
+                  Assigned Users
+                </span>
 
                 <span className="company-role-user-count">
                   {userCount}
@@ -310,13 +401,16 @@ export default function ViewRolePage() {
               </div>
 
               <div className="company-role-view-detail">
-                <span>Total Permissions</span>
+                <span>
+                  Total Permissions
+                </span>
 
                 <span className="company-role-badge company-role-badge-blue">
                   {role.isAdmin
                     ? "All access"
                     : `${permissionCount} ${
-                        permissionCount === 1
+                        permissionCount ===
+                        1
                           ? "permission"
                           : "permissions"
                       }`}
@@ -335,8 +429,8 @@ export default function ViewRolePage() {
                 <h2>Users</h2>
 
                 <p>
-                  Users currently assigned to this
-                  role.
+                  Users currently assigned
+                  to this role.
                 </p>
               </div>
 
@@ -351,38 +445,45 @@ export default function ViewRolePage() {
                   ◉
                 </div>
 
-                <h3>No users assigned</h3>
+                <h3>
+                  No users assigned
+                </h3>
 
                 <p>
-                  There are currently no users with
-                  this role.
+                  There are currently no
+                  users with this role.
                 </p>
               </div>
             ) : (
               <div className="company-role-users-list">
-                {role.users?.map((user) => (
-                  <div
-                    key={user.id}
-                    className="company-role-user-row"
-                  >
-                    <div className="company-user-avatar">
-                      {user.name
-                        ?.charAt(0)
-                        ?.toUpperCase() || "U"}
-                    </div>
+                {role.users?.map(
+                  (user) => (
+                    <div
+                      key={user.id}
+                      className="company-role-user-row"
+                    >
+                      <div className="company-user-avatar">
+                        {user.name
+                          ?.charAt(0)
+                          ?.toUpperCase() ||
+                          "U"}
+                      </div>
 
-                    <div className="company-role-user-info">
-                      <strong>
-                        {user.name ||
-                          "Unnamed User"}
-                      </strong>
+                      <div className="company-role-user-info">
+                        <strong>
+                          {user.name ||
+                            "Unnamed User"}
+                        </strong>
 
-                      {user.email && (
-                        <span>{user.email}</span>
-                      )}
+                        {user.email && (
+                          <span>
+                            {user.email}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ),
+                )}
               </div>
             )}
           </section>
@@ -395,11 +496,13 @@ export default function ViewRolePage() {
                 ACCESS CONTROL
               </div>
 
-              <h2>Permissions</h2>
+              <h2>
+                Permissions
+              </h2>
 
               <p>
-                Permissions currently assigned to
-                this role.
+                Permissions currently
+                assigned to this role.
               </p>
             </div>
 
@@ -407,7 +510,8 @@ export default function ViewRolePage() {
               {role.isAdmin
                 ? "Full system access"
                 : `${permissionCount} ${
-                    permissionCount === 1
+                    permissionCount ===
+                    1
                       ? "permission"
                       : "permissions"
                   }`}
@@ -421,12 +525,15 @@ export default function ViewRolePage() {
               </div>
 
               <div>
-                <h3>Administrator Access</h3>
+                <h3>
+                  Administrator Access
+                </h3>
 
                 <p>
-                  This role has full system access.
-                  Individual permissions are not
-                  required.
+                  This role has full
+                  system access.
+                  Individual permissions
+                  are not required.
                 </p>
               </div>
             </div>
@@ -436,11 +543,13 @@ export default function ViewRolePage() {
                 ◆
               </div>
 
-              <h3>No permissions assigned</h3>
+              <h3>
+                No permissions assigned
+              </h3>
 
               <p>
-                This role currently has no
-                permissions.
+                This role currently has
+                no permissions.
               </p>
             </div>
           ) : (
@@ -448,7 +557,10 @@ export default function ViewRolePage() {
               {Object.entries(
                 groupedPermissions,
               ).map(
-                ([resource, permissions]) => (
+                ([
+                  resource,
+                  permissions,
+                ]) => (
                   <div
                     key={resource}
                     className="company-role-permission-group"
@@ -468,13 +580,17 @@ export default function ViewRolePage() {
                       </h3>
 
                       <span>
-                        {permissions.length}
+                        {
+                          permissions.length
+                        }
                       </span>
                     </div>
 
                     <div className="company-role-permission-list">
                       {permissions.map(
-                        (permission) => (
+                        (
+                          permission,
+                        ) => (
                           <div
                             key={
                               permission.id

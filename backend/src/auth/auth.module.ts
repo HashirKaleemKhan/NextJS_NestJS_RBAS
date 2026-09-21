@@ -8,6 +8,7 @@ import { AuthService } from './auth.service';
 import { UsersModule } from '../users/users.module';
 import { JwtStrategy } from './strategies/jwt.strategy/jwt.strategy';
 import { AuditLogsModule } from "../audit-logs/audit-logs.module";
+import { AuthResolver } from './graphql/auth.resolver';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { AuditLogsModule } from "../audit-logs/audit-logs.module";
   AuthService,
   JwtStrategy,
   PermissionsGuard,
+  AuthResolver,
 ],
 })
 export class AuthModule {}

@@ -1,48 +1,117 @@
 "use client";
 
 import {
+  Suspense, 
   useEffect,
   useRef,
   useState,
 } from "react";
+
 import {
   useRouter,
   useSearchParams,
 } from "next/navigation";
 
-import { api } from "@/lib/api";
+import { gql } from "@apollo/client";
+import {
+  useMutation,
+  useQuery,
+} from "@apollo/client/react";
+
 import { getUser } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import ConfirmModal from "@/components/ConfirmModal";
 
-type Group = {
-  id: number;
-  name: string;
-  active: boolean;
-};
+const USERS_QUERY = gql`
+  query Users(
+    $page: Int
+    $limit: Int
+    $search: String
+  ) {
+    users(
+      page: $page
+      limit: $limit
+      search: $search
+    ) {
+      data {
+        id
+        name
+        email
+        active
+        roleId
+        managerId
+        groupId
 
-type Role = {
-  id: number;
-  name: string;
-  level: number;
-  isAdmin: boolean;
-  active: boolean;
-  groupId: number | null;
-  group?: Group | null;
-};
+        role {
+          id
+          name
+          active
+          group {
+            id
+            name
+            active
+          }
+        }
+
+        manager {
+          id
+          name
+        }
+      }
+
+      pagination {
+        page
+        limit
+        total
+        totalPages
+      }
+    }
+  }
+`;
+
+const UPDATE_USER_STATUS_MUTATION = gql`
+  mutation UpdateUserStatus(
+    $id: Int!
+    $input: UpdateUserStatusInput!
+  ) {
+    updateUserStatus(
+      id: $id
+      input: $input
+    ) {
+      id
+      active
+    }
+  }
+`;
+
+const DELETE_USER_MUTATION = gql`
+  mutation DeleteUser($id: Int!) {
+    deleteUser(id: $id)
+  }
+`;
 
 type User = {
   id: number;
   name: string;
   email: string;
-  createdAt: string;
+  createdAt?: string;
   active: boolean;
+
+  roleId?: number;
+
+  managerId?: number | null;
+
+  groupId?: number | null;
 
   role?: {
     id?: number;
     name: string;
-    level?: number;
-    active: boolean;
+    active?: boolean;
+    group?: {
+      id: number;
+      name: string;
+      active: boolean;
+    } | null;
   };
 
   manager?: {
@@ -66,13 +135,25 @@ type Pagination = {
   totalPages: number;
 };
 
-export default function UsersPage() {
+type UsersQueryData = {
+  users: {
+    data: User[];
+    pagination: Pagination;
+  };
+};
+
+type UsersQueryVariables = {
+  page?: number;
+  limit?: number;
+  search?: string;
+};
+
+function UsersPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [users, setUsers] = useState<User[]>([]);
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [groups, setGroups] = useState<Group[]>([]);
+  const [users, setUsers] =
+    useState<User[]>([]);
 
   const [currentUser, setCurrentUser] =
     useState<CurrentUser | null>(null);
@@ -106,15 +187,115 @@ export default function UsersPage() {
       totalPages: 0,
     });
 
-  /*
-   * Prevent the search effect from running
-   * during the initial page load.
-   */
   const initialUsersLoaded =
     useRef(false);
 
   const success =
     searchParams.get("success");
+
+  // -----------------------------------
+  // APOLLO USERS QUERY
+  // -----------------------------------
+
+  const {
+    data: usersData,
+    loading: usersQueryLoading,
+    error: usersQueryError,
+    refetch: refetchUsers,
+  } = useQuery<
+    UsersQueryData,
+    UsersQueryVariables
+  >(USERS_QUERY, {
+    variables: {
+      page: 1,
+      limit: 10,
+      search: "",
+    },
+    fetchPolicy: "network-only",
+  });
+
+  // -----------------------------------
+  // APOLLO USER MUTATIONS
+  // -----------------------------------
+
+  const [
+    updateUserStatus,
+  ] = useMutation(
+    UPDATE_USER_STATUS_MUTATION,
+  );
+
+  const [
+    deleteUserMutation,
+  ] = useMutation(
+    DELETE_USER_MUTATION,
+  );
+
+  // -----------------------------------
+  // APPLY GRAPHQL USERS DATA
+  // -----------------------------------
+
+  useEffect(() => {
+    if (!usersData?.users) {
+      return;
+    }
+
+    const result =
+      usersData.users;
+
+    setUsers(
+      Array.isArray(result.data)
+        ? result.data
+        : [],
+    );
+
+    setPagination({
+      page:
+        result.pagination?.page ??
+        1,
+
+      limit:
+        result.pagination?.limit ??
+        10,
+
+      total:
+        result.pagination?.total ??
+        0,
+
+      totalPages:
+        result.pagination?.totalPages ??
+        0,
+    });
+
+    initialUsersLoaded.current =
+      true;
+  }, [usersData]);
+
+  // -----------------------------------
+  // GRAPHQL USERS ERROR
+  // -----------------------------------
+
+  useEffect(() => {
+    if (!usersQueryError) {
+      return;
+    }
+
+    if (
+      usersQueryError.message
+        .toLowerCase()
+        .includes("unauthorized")
+    ) {
+      router.replace("/login");
+      return;
+    }
+
+    setError(
+      usersQueryError.message ||
+        "Unable to load users.",
+    );
+  }, [
+    usersQueryError,
+    router,
+  ]);
 
   // -----------------------------------
   // LOAD USERS
@@ -124,51 +305,47 @@ export default function UsersPage() {
     page: number,
     searchQuery = search,
   ) {
-    const usersResponse =
-      await api.get("/users", {
-        params: {
-          page,
-          limit: 10,
-          search:
-            searchQuery.trim(),
-        },
+    const result =
+      await refetchUsers({
+        page,
+        limit: 10,
+        search:
+          searchQuery.trim(),
       });
 
-    const response =
-      usersResponse.data;
+    const usersResult =
+      result.data?.users;
 
-    const userList =
-      Array.isArray(response)
-        ? response
-        : Array.isArray(
-              response?.data,
-            )
-          ? response.data
-          : [];
+    if (!usersResult) {
+      throw new Error(
+        "Unable to load users.",
+      );
+    }
 
-    setUsers(userList);
+    setUsers(
+      Array.isArray(
+        usersResult.data,
+      )
+        ? usersResult.data
+        : [],
+    );
 
     setPagination({
       page:
-        response?.page ??
-        page,
+        usersResult.pagination
+          ?.page ?? page,
 
       limit:
-        response?.limit ??
-        10,
+        usersResult.pagination
+          ?.limit ?? 10,
 
       total:
-        response?.total ??
-        userList.length,
+        usersResult.pagination
+          ?.total ?? 0,
 
       totalPages:
-        response?.totalPages ??
-        Math.ceil(
-          (response?.total ??
-            userList.length) /
-            (response?.limit ??
-              10),
-        ),
+        usersResult.pagination
+          ?.totalPages ?? 0,
     });
   }
 
@@ -190,90 +367,7 @@ export default function UsersPage() {
 
     setCurrentUser(user);
 
-    async function loadData() {
-      try {
-        setLoading(true);
-        setError("");
-
-        await loadUsers(1, "");
-
-        /*
-         * Mark initial user loading as complete.
-         * The search effect will now respond to
-         * future search input changes.
-         */
-        initialUsersLoaded.current =
-          true;
-
-        try {
-          const rolesResponse =
-            await api.get("/roles", {
-              params: {
-                page: 1,
-                limit: 100,
-              },
-            });
-
-          const rolesData =
-            rolesResponse.data;
-
-          const roleList =
-            Array.isArray(rolesData)
-              ? rolesData
-              : Array.isArray(
-                    rolesData?.data,
-                  )
-                ? rolesData.data
-                : [];
-
-          setRoles(roleList);
-        } catch {
-          setRoles([]);
-        }
-
-        try {
-          const groupsResponse =
-            await api.get<{
-              data: Group[];
-              pagination: {
-                page: number;
-                limit: number;
-                total: number;
-                totalPages: number;
-              };
-            }>("/groups", {
-              params: {
-                page: 1,
-                limit: 100,
-              },
-            });
-
-          setGroups(
-            groupsResponse.data.data,
-          );
-        } catch {
-          setGroups([]);
-        }
-      } catch (err: any) {
-        if (
-          err?.response?.status ===
-          401
-        ) {
-          router.replace("/login");
-          return;
-        }
-
-        setError(
-          err?.response?.data
-            ?.message ||
-            "Unable to load users.",
-        );
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadData();
+    setLoading(false);
   }, [router]);
 
   // -----------------------------------
@@ -303,8 +397,9 @@ export default function UsersPage() {
             );
           } catch (err: any) {
             if (
-              err?.response?.status ===
-              401
+              err?.message
+                ?.toLowerCase()
+                .includes("unauthorized")
             ) {
               router.replace(
                 "/login",
@@ -313,8 +408,7 @@ export default function UsersPage() {
             }
 
             setError(
-              err?.response?.data
-                ?.message ||
+              err?.message ||
                 "Unable to search users.",
             );
           } finally {
@@ -367,16 +461,16 @@ export default function UsersPage() {
       );
     } catch (err: any) {
       if (
-        err?.response?.status ===
-        401
+        err?.message
+          ?.toLowerCase()
+          .includes("unauthorized")
       ) {
         router.replace("/login");
         return;
       }
 
       setError(
-        err?.response?.data
-          ?.message ||
+        err?.message ||
           "Unable to load users.",
       );
     } finally {
@@ -484,25 +578,7 @@ export default function UsersPage() {
   // -----------------------------------
 
   function getRole(user: User) {
-    if (!user.role) {
-      return undefined;
-    }
-
-    if (
-      user.role.id !== undefined
-    ) {
-      return roles.find(
-        (role) =>
-          role.id ===
-          user.role?.id,
-      );
-    }
-
-    return roles.find(
-      (role) =>
-        role.name ===
-        user.role?.name,
-    );
+    return user.role;
   }
 
   // -----------------------------------
@@ -515,22 +591,23 @@ export default function UsersPage() {
     const role =
       getRole(user);
 
-    if (role?.isAdmin) {
-      return "System Administration";
-    }
-
-    if (!role?.groupId) {
+    if (!role) {
       return "Unassigned";
     }
 
-    return (
-      groups.find(
-        (group) =>
-          group.id ===
-          role.groupId,
-      )?.name ||
-      "Unassigned"
-    );
+    if (
+      role.name === "Admin"
+    ) {
+      return "System Administration";
+    }
+
+    if (
+      role.group?.name
+    ) {
+      return role.group.name;
+    }
+
+    return "Unassigned";
   }
 
   // -----------------------------------
@@ -551,11 +628,6 @@ export default function UsersPage() {
   // SEARCH DISPLAY
   // -----------------------------------
 
-  /*
-   * Search is now performed by the backend.
-   * Therefore users already contains only
-   * the records matching the current search.
-   */
   const filteredUsers = users;
 
   // -----------------------------------
@@ -581,7 +653,7 @@ export default function UsersPage() {
     const isProtectedAdmin =
       currentUser?.role ===
         "Admin" &&
-      role?.isAdmin === true;
+      role?.name === "Admin";
 
     if (isProtectedAdmin) {
       setError(
@@ -606,13 +678,15 @@ export default function UsersPage() {
       const newActiveStatus =
         !user.active;
 
-      await api.patch(
-        `/users/${user.id}/status`,
-        {
-          active:
-            newActiveStatus,
+      await updateUserStatus({
+        variables: {
+          id: user.id,
+          input: {
+            active:
+              newActiveStatus,
+          },
         },
-      );
+      });
 
       setUsers(
         (currentUsers) =>
@@ -637,8 +711,7 @@ export default function UsersPage() {
       );
     } catch (err: any) {
       setError(
-        err?.response?.data
-          ?.message ||
+        err?.message ||
           "Unable to update user status.",
       );
     }
@@ -665,7 +738,7 @@ export default function UsersPage() {
     const isProtectedAdmin =
       currentUser?.role ===
         "Admin" &&
-      role?.isAdmin === true;
+      role?.name === "Admin";
 
     if (isProtectedAdmin) {
       setError(
@@ -691,9 +764,11 @@ export default function UsersPage() {
       setDeleteLoading(true);
       setError("");
 
-      await api.delete(
-        `/users/${deleteTarget.id}`,
-      );
+      await deleteUserMutation({
+        variables: {
+          id: deleteTarget.id,
+        },
+      });
 
       setUsers(
         (currentUsers) =>
@@ -711,8 +786,7 @@ export default function UsersPage() {
       );
     } catch (err: any) {
       setError(
-        err?.response?.data
-          ?.message ||
+        err?.message ||
           "Unable to delete user.",
       );
     } finally {
@@ -759,7 +833,10 @@ export default function UsersPage() {
   // INITIAL LOADING
   // -----------------------------------
 
-  if (loading) {
+  if (
+    loading ||
+    usersQueryLoading
+  ) {
     return (
       <DashboardLayout>
         <div className="company-page-loading">
@@ -1045,8 +1122,8 @@ export default function UsersPage() {
                       const isProtectedAdmin =
                         currentUser?.role ===
                           "Admin" &&
-                        role?.isAdmin ===
-                          true;
+                        role?.name ===
+                          "Admin";
 
                       return (
                         <tr
@@ -1099,7 +1176,8 @@ export default function UsersPage() {
                           {/* GROUP */}
 
                           <td>
-                            {role?.isAdmin ? (
+                            {role?.name ===
+                            "Admin" ? (
                               <div className="company-admin-group-cell">
                                 <span className="company-admin-group-badge">
                                   System Admin
@@ -1353,5 +1431,22 @@ export default function UsersPage() {
       />
 
     </DashboardLayout>
+  );
+}
+
+export default function UsersPage() {
+  return (
+    <Suspense
+      fallback={
+        <DashboardLayout>
+          <div className="company-page-loading">
+            <div className="company-loading-spinner" />
+            <span>Loading users...</span>
+          </div>
+        </DashboardLayout>
+      }
+    >
+      <UsersPageContent />
+    </Suspense>
   );
 }

@@ -3,14 +3,69 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { api } from "@/lib/api";
+import { gql } from "@apollo/client";
+import {
+  useMutation,
+  useQuery,
+} from "@apollo/client/react";
+
 import DashboardLayout from "@/components/layouts/DashboardLayout";
+
+// -----------------------------------
+// TYPES
+// -----------------------------------
 
 type Permission = {
   id: number;
   name: string;
   parentId: number | null;
 };
+
+type ParentPermissionsQueryData = {
+  roleAllPermissions: Permission[];
+};
+
+type CreateGroupMutationData = {
+  createGroup: {
+    id: number;
+    name: string;
+    active: boolean;
+  };
+};
+
+type CreateGroupInput = {
+  name: string;
+  active: boolean;
+  permissionIds: number[];
+};
+
+// -----------------------------------
+// GRAPHQL
+// -----------------------------------
+
+const ROLE_ALL_PERMISSIONS_QUERY = gql`
+  query RoleAllPermissions {
+    roleAllPermissions {
+      id
+      name
+      parentId
+    }
+  }
+`;
+
+const CREATE_GROUP_MUTATION = gql`
+  mutation CreateGroup($input: CreateGroupInput!) {
+    createGroup(input: $input) {
+      id
+      name
+      active
+    }
+  }
+`;
+
+// -----------------------------------
+// PAGE
+// -----------------------------------
 
 export default function CreateGroupPage() {
   const router = useRouter();
@@ -20,8 +75,10 @@ export default function CreateGroupPage() {
 
   const [name, setName] = useState("");
 
-  const [selectedPermissions, setSelectedPermissions] =
-    useState<number[]>([]);
+  const [
+    selectedPermissions,
+    setSelectedPermissions,
+  ] = useState<number[]>([]);
 
   const [active, setActive] =
     useState(true);
@@ -35,49 +92,96 @@ export default function CreateGroupPage() {
   const [error, setError] =
     useState("");
 
+  // -----------------------------------
+  // LOAD PERMISSIONS
+  // -----------------------------------
+
+  const {
+    data,
+    loading: permissionsLoading,
+    error: permissionsError,
+  } = useQuery<ParentPermissionsQueryData>(
+    ROLE_ALL_PERMISSIONS_QUERY,
+    {
+      fetchPolicy: "network-only",
+    },
+  );
+
+  // -----------------------------------
+  // CREATE GROUP
+  // -----------------------------------
+
+  const [
+    createGroupMutation,
+  ] = useMutation<
+    CreateGroupMutationData,
+    {
+      input: CreateGroupInput;
+    }
+  >(CREATE_GROUP_MUTATION);
+
+  // -----------------------------------
+  // PERMISSION RESULT
+  // -----------------------------------
+
   useEffect(() => {
-    loadPermissions();
-  }, []);
+    if (permissionsLoading) {
+      return;
+    }
 
-  async function loadPermissions() {
-    try {
-      setLoading(true);
-      setError("");
-
-      const response =
-        await api.get("/roles/permissions");
-
-      setPermissions(
-        response.data.filter(
-          (permission: Permission) =>
-            permission.parentId === null,
-        ),
-      );
-    } catch (err: any) {
+    if (permissionsError) {
       console.error(
         "Unable to load permissions:",
-        err,
+        permissionsError,
       );
 
       setError(
-        err?.response?.data?.message ||
+        permissionsError.message ||
           "Unable to load permissions.",
       );
-    } finally {
-      setLoading(false);
-    }
-  }
 
-  function togglePermission(id: number) {
-    setSelectedPermissions((current) =>
-      current.includes(id)
-        ? current.filter(
-            (permissionId) =>
-              permissionId !== id,
-          )
-        : [...current, id],
+      setLoading(false);
+      return;
+    }
+
+    const parentPermissions =
+  data?.roleAllPermissions?.filter(
+    (permission) =>
+      permission.parentId === null,
+  ) || [];
+
+    setPermissions(parentPermissions);
+    setLoading(false);
+  }, [
+    data,
+    permissionsError,
+    permissionsLoading,
+  ]);
+
+  // -----------------------------------
+  // TOGGLE PERMISSION
+  // -----------------------------------
+
+  function togglePermission(
+    id: number,
+  ) {
+    setSelectedPermissions(
+      (current) =>
+        current.includes(id)
+          ? current.filter(
+              (permissionId) =>
+                permissionId !== id,
+            )
+          : [
+              ...current,
+              id,
+            ],
     );
   }
+
+  // -----------------------------------
+  // CREATE GROUP
+  // -----------------------------------
 
   async function createGroup(
     e: React.FormEvent,
@@ -93,7 +197,9 @@ export default function CreateGroupPage() {
       return;
     }
 
-    if (selectedPermissions.length === 0) {
+    if (
+      selectedPermissions.length === 0
+    ) {
       setError(
         "Select at least one parent permission.",
       );
@@ -103,11 +209,15 @@ export default function CreateGroupPage() {
     try {
       setSaving(true);
 
-      await api.post("/groups", {
-        name: name.trim(),
-        active,
-        permissionIds:
-          selectedPermissions,
+      await createGroupMutation({
+        variables: {
+          input: {
+            name: name.trim(),
+            active,
+            permissionIds:
+              selectedPermissions,
+          },
+        },
       });
 
       router.replace(
@@ -119,10 +229,26 @@ export default function CreateGroupPage() {
         err,
       );
 
-      setError(
-        err?.response?.data?.message ||
-          "Unable to create group.",
-      );
+      const message =
+        err?.message ||
+        "Unable to create group.";
+
+      if (
+        message
+          .toLowerCase()
+          .includes("unauthorized") ||
+        message
+          .toLowerCase()
+          .includes("jwt") ||
+        message
+          .toLowerCase()
+          .includes("authentication")
+      ) {
+        router.replace("/login");
+        return;
+      }
+
+      setError(message);
     } finally {
       setSaving(false);
     }
@@ -304,7 +430,9 @@ export default function CreateGroupPage() {
                           }
                         >
                           <span className="company-groups-permission-check">
-                            {selected ? "✓" : ""}
+                            {selected
+                              ? "✓"
+                              : ""}
                           </span>
 
                           <span className="company-groups-permission-content">

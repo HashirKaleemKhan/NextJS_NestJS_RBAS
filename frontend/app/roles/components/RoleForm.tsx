@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+
+import { gql } from "@apollo/client";
+import {
+  useMutation,
+  useQuery,
+} from "@apollo/client/react";
 
 type Permission = {
   id: number;
@@ -46,14 +51,106 @@ type RoleFormProps = {
   onSuccess: (message: string) => void;
 };
 
+type RolesQueryData = {
+  roles: {
+    data: Role[];
+  };
+};
+
+type RolesQueryVariables = {
+  page?: number;
+  limit?: number;
+  search?: string;
+};
+
+type RoleGroupsQueryData = {
+  roleGroups: Group[];
+};
+
+type RoleGroupPermissionsQueryData = {
+  roleGroupPermissions: GroupPermission[];
+};
+
+const ROLES_QUERY = gql`
+  query RolesForRoleForm(
+    $page: Int
+    $limit: Int
+    $search: String
+  ) {
+    roles(
+      page: $page
+      limit: $limit
+      search: $search
+    ) {
+      data {
+        id
+        name
+        groupId
+        reportsToRoleId
+        active
+        isAdmin
+      }
+    }
+  }
+`;
+
+const ROLE_GROUPS_QUERY = gql`
+  query RoleGroups {
+    roleGroups {
+      id
+      name
+      active
+    }
+  }
+`;
+
+const ROLE_GROUP_PERMISSIONS_QUERY = gql`
+  query RoleGroupPermissions($groupId: Int!) {
+    roleGroupPermissions(groupId: $groupId) {
+      id
+      name
+      children {
+        id
+        name
+      }
+    }
+  }
+`;
+
+const CREATE_ROLE_MUTATION = gql`
+  mutation CreateRole($input: CreateRoleInput!) {
+    createRole(input: $input) {
+      id
+      name
+      groupId
+      reportsToRoleId
+      active
+      isAdmin
+    }
+  }
+`;
+
+const UPDATE_ROLE_MUTATION = gql`
+  mutation UpdateRole(
+    $id: Int!
+    $input: UpdateRoleInput!
+  ) {
+    updateRole(id: $id, input: $input) {
+      id
+      name
+      groupId
+      reportsToRoleId
+      active
+      isAdmin
+    }
+  }
+`;
+
 export default function RoleForm({
   mode,
   role,
   onSuccess,
 }: RoleFormProps) {
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [roles, setRoles] = useState<Role[]>([]);
-
   const [form, setForm] =
     useState<RoleFormData>({
       name: role?.name || "",
@@ -74,9 +171,6 @@ export default function RoleForm({
       ) || [],
     );
 
-  const [loading, setLoading] =
-    useState(true);
-
   const [loadingPermissions, setLoadingPermissions] =
     useState(false);
 
@@ -91,98 +185,126 @@ export default function RoleForm({
       role?.groupId ?? null,
     );
 
-  /*
-   * Parent permission currently expanded.
-   *
-   * null = all collapsed
-   */
   const [expandedPermissionGroup, setExpandedPermissionGroup] =
     useState<number | null>(null);
 
-  // -----------------------------------
-  // LOAD GROUPS + ROLES
-  // -----------------------------------
+  const {
+    data: rolesData,
+    loading: loadingRoles,
+    error: rolesError,
+  } = useQuery<
+    RolesQueryData,
+    RolesQueryVariables
+  >(ROLES_QUERY, {
+    variables: {
+      page: 1,
+      limit: 100,
+      search: "",
+    },
+    fetchPolicy: "network-only",
+  });
+
+  const {
+    data: groupsData,
+    loading: loadingGroups,
+    error: groupsError,
+  } = useQuery<RoleGroupsQueryData>(
+    ROLE_GROUPS_QUERY,
+    {
+      fetchPolicy: "network-only",
+    },
+  );
+
+  const {
+    data: groupPermissionsData,
+    loading: groupPermissionsQueryLoading,
+    error: groupPermissionsError,
+  } = useQuery<RoleGroupPermissionsQueryData>(
+    ROLE_GROUP_PERMISSIONS_QUERY,
+    {
+      variables: {
+        groupId:
+          form.groupId ?? 0,
+      },
+      skip:
+        form.groupId === null ||
+        form.isAdmin,
+      fetchPolicy: "network-only",
+    },
+  );
+
+  const [
+    createRoleMutation,
+  ] = useMutation(
+    CREATE_ROLE_MUTATION,
+  );
+
+  const [
+    updateRoleMutation,
+  ] = useMutation(
+    UPDATE_ROLE_MUTATION,
+  );
+
+  const groups =
+    groupsData?.roleGroups || [];
+
+  const roles =
+    rolesData?.roles?.data || [];
+
+  const loading =
+    loadingRoles ||
+    loadingGroups;
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (rolesError) {
+      setError(
+        rolesError.message ||
+          "Unable to load role data.",
+      );
+    }
+
+    if (groupsError) {
+      setError(
+        groupsError.message ||
+          "Unable to load role groups.",
+      );
+    }
+  }, [
+    rolesError,
+    groupsError,
+  ]);
 
   useEffect(() => {
     if (
-      form.groupId !== null &&
-      !form.isAdmin
+      form.groupId === null ||
+      form.isAdmin
     ) {
-      loadGroupPermissions(
-        form.groupId,
-        mode === "edit"
-          ? role?.permissions?.map(
-              (item) =>
-                item.permission.id,
-            ) || []
-          : [],
-      );
+      setAvailablePermissions([]);
+      setExpandedPermissionGroup(null);
+      return;
     }
-  }, []);
 
-  async function loadData() {
-    try {
-      setLoading(true);
-      setError("");
+    setLoadingPermissions(
+      groupPermissionsQueryLoading,
+    );
 
-          const rolesResponse =
-          await api.get<{
-            data: Role[];
-            pagination: {
-              page: number;
-              limit: number;
-              total: number;
-              totalPages: number;
-            };
-          }>("/roles", {
-            params: {
-              page: 1,
-              limit: 100,
-            },
-          });
+    if (groupPermissionsError) {
+      setAvailablePermissions([]);
+      setSelectedPermissions([]);
+      setExpandedPermissionGroup(null);
 
-        setRoles(rolesResponse.data.data);
-
-      const [
-        groupsResponse,
-      ] = await Promise.all([
-        api.get("/roles/groups")
-      ]);
-
-      setGroups(groupsResponse.data);
-  
-    } catch (err: any) {
       setError(
-        err?.response?.data?.message ||
-          "Unable to load role data.",
+        groupPermissionsError.message ||
+          "Unable to load group permissions.",
       );
-    } finally {
-      setLoading(false);
+
+      return;
     }
-  }
 
-  // -----------------------------------
-  // LOAD GROUP PERMISSIONS
-  // -----------------------------------
-
-  async function loadGroupPermissions(
-    groupId: number,
-    existingPermissionIds: number[] = [],
-  ) {
-    try {
-      setLoadingPermissions(true);
-      setError("");
-
-      const response = await api.get(
-        `/roles/groups/${groupId}/permissions`,
-      );
-
+    if (!groupPermissionsQueryLoading) {
       const groupPermissions =
-        response.data as GroupPermission[];
+        groupPermissionsData?.roleGroupPermissions ||
+        [];
 
       setAvailablePermissions(
         groupPermissions,
@@ -197,6 +319,14 @@ export default function RoleForm({
             ),
         );
 
+      const existingPermissionIds =
+        mode === "edit"
+          ? role?.permissions?.map(
+              (item) =>
+                item.permission.id,
+            ) || []
+          : [];
+
       setSelectedPermissions(
         existingPermissionIds.filter(
           (id) =>
@@ -204,28 +334,19 @@ export default function RoleForm({
         ),
       );
 
-      /*
-       * Start with all parent permissions
-       * collapsed.
-       */
-      setExpandedPermissionGroup(null);
-    } catch (err: any) {
-      setAvailablePermissions([]);
-      setSelectedPermissions([]);
-      setExpandedPermissionGroup(null);
-
-      setError(
-        err?.response?.data?.message ||
-          "Unable to load group permissions.",
+      setExpandedPermissionGroup(
+        null,
       );
-    } finally {
-      setLoadingPermissions(false);
     }
-  }
-
-  // -----------------------------------
-  // GROUP CHANGE
-  // -----------------------------------
+  }, [
+    form.groupId,
+    form.isAdmin,
+    groupPermissionsData,
+    groupPermissionsQueryLoading,
+    groupPermissionsError,
+    mode,
+    role,
+  ]);
 
   async function handleGroupChange(
     groupId: number | null,
@@ -239,16 +360,8 @@ export default function RoleForm({
     setAvailablePermissions([]);
     setExpandedPermissionGroup(null);
 
-    if (groupId === null) {
-      return;
-    }
-
-    await loadGroupPermissions(groupId);
+    setError("");
   }
-
-  // -----------------------------------
-  // ADMIN CHANGE
-  // -----------------------------------
 
   async function handleAdminChange(
     isAdmin: boolean,
@@ -282,20 +395,12 @@ export default function RoleForm({
       reportsToRoleId: null,
     }));
 
-    if (restoredGroupId !== null) {
-      await loadGroupPermissions(
-        restoredGroupId,
-        role?.permissions?.map(
-          (item) =>
-            item.permission.id,
-        ) || [],
-      );
-    }
-  }
+    setSelectedPermissions([]);
+    setAvailablePermissions([]);
+    setExpandedPermissionGroup(null);
 
-  // -----------------------------------
-  // TOGGLE PARENT PERMISSION
-  // -----------------------------------
+    setError("");
+  }
 
   function togglePermissionGroup(
     groupId: number,
@@ -307,10 +412,6 @@ export default function RoleForm({
           : groupId,
     );
   }
-
-  // -----------------------------------
-  // TOGGLE CHILD PERMISSION
-  // -----------------------------------
 
   function togglePermission(
     permissionId: number,
@@ -333,10 +434,6 @@ export default function RoleForm({
       },
     );
   }
-
-  // -----------------------------------
-  // SAVE
-  // -----------------------------------
 
   async function handleSubmit(
     event: React.FormEvent,
@@ -387,7 +484,7 @@ export default function RoleForm({
     try {
       setSaving(true);
 
-      const payload = {
+      const input = {
         name: form.name.trim(),
 
         groupId: form.isAdmin
@@ -410,10 +507,11 @@ export default function RoleForm({
       };
 
       if (mode === "create") {
-        await api.post(
-          "/roles",
-          payload,
-        );
+        await createRoleMutation({
+          variables: {
+            input,
+          },
+        });
 
         onSuccess(
           "Role created successfully.",
@@ -428,17 +526,19 @@ export default function RoleForm({
         );
       }
 
-      await api.patch(
-        `/roles/${role.id}`,
-        payload,
-      );
+      await updateRoleMutation({
+        variables: {
+          id: role.id,
+          input,
+        },
+      });
 
       onSuccess(
         "Role updated successfully.",
       );
     } catch (err: any) {
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to save role.",
       );
     } finally {
@@ -446,15 +546,13 @@ export default function RoleForm({
     }
   }
 
-  // -----------------------------------
-  // LOADING
-  // -----------------------------------
-
-    if (loading) {
+  if (loading) {
     return (
       <div className="company-page-loading">
         <div className="company-loading-spinner" />
-        <span>Loading role form...</span>
+        <span>
+          Loading role form...
+        </span>
       </div>
     );
   }
@@ -472,21 +570,6 @@ export default function RoleForm({
 
       {/* ROLE SETTINGS */}
       <div className="company-role-form-section">
-        {/* <div className="company-role-section-heading">
-          <div>
-            <div className="company-panel-eyebrow">
-              ROLE SETTINGS
-            </div>
-
-            <h3>Role information</h3>
-
-            <p>
-              Define the role and its position in
-              the organization.
-            </p>
-          </div>
-        </div> */}
-
         <div className="company-role-settings-grid">
           <div className="company-role-form-group">
             <label htmlFor="role-name">
@@ -517,10 +600,13 @@ export default function RoleForm({
               id="role-group"
               value={form.groupId ?? ""}
               onChange={(event) => {
-                const value = event.target.value;
+                const value =
+                  event.target.value;
 
                 handleGroupChange(
-                  value ? Number(value) : null,
+                  value
+                    ? Number(value)
+                    : null,
                 );
               }}
               disabled={
@@ -575,7 +661,8 @@ export default function RoleForm({
                 {roles
                   .filter(
                     (item) =>
-                      item.id !== role?.id,
+                      item.id !== role?.id &&
+                      item.active,
                   )
                   .map((item) => (
                     <option
@@ -616,6 +703,7 @@ export default function RoleForm({
 
                 <span>
                   <strong>Active</strong>
+
                   <small>
                     Inactive roles cannot be assigned
                     to new users.
@@ -646,7 +734,9 @@ export default function RoleForm({
           </span>
 
           <span>
-            <strong>Administrator role</strong>
+            <strong>
+              Administrator role
+            </strong>
 
             <small>
               Administrator roles bypass normal
@@ -675,7 +765,8 @@ export default function RoleForm({
             </div>
 
             <div className="company-role-permission-total">
-              {selectedPermissions.length} selected
+              {selectedPermissions.length}{" "}
+              selected
             </div>
           </div>
 
@@ -686,7 +777,9 @@ export default function RoleForm({
               </div>
 
               <div>
-                <strong>Select a group first</strong>
+                <strong>
+                  Select a group first
+                </strong>
 
                 <p>
                   Choose a group above to see the
@@ -700,6 +793,7 @@ export default function RoleForm({
           {loadingPermissions && (
             <div className="company-role-permissions-loading">
               <div className="company-loading-spinner" />
+
               <span>
                 Loading permissions...
               </span>
@@ -934,7 +1028,9 @@ export default function RoleForm({
         <button
           type="button"
           className="company-secondary-button"
-          onClick={() => window.history.back()}
+          onClick={() =>
+            window.history.back()
+          }
           disabled={saving}
         >
           Cancel

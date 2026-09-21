@@ -5,13 +5,98 @@ import {
   useRef,
   useState,
 } from "react";
+
 import { useRouter } from "next/navigation";
 
-import { api } from "@/lib/api";
+import { gql } from "@apollo/client";
+
+import {
+  useMutation,
+  useQuery,
+} from "@apollo/client/react";
+
 import { getUser } from "@/lib/auth";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import ConfirmModal from "@/components/ConfirmModal";
 import NoticeModal from "@/components/NoticeModal";
+
+// -----------------------------------
+// GRAPHQL
+// -----------------------------------
+
+const ROLES_QUERY = gql`
+  query Roles(
+    $page: Int
+    $limit: Int
+    $search: String
+  ) {
+    roles(
+      page: $page
+      limit: $limit
+      search: $search
+    ) {
+      data {
+        id
+        name
+        isAdmin
+        active
+        groupId
+        reportsToRoleId
+
+        group {
+          id
+          name
+          active
+        }
+
+        reportsToRole {
+          id
+          name
+        }
+
+        users {
+          id
+          name
+        }
+
+        permissions {
+          permission {
+            id
+            name
+          }
+        }
+      }
+
+      pagination {
+        page
+        limit
+        total
+        totalPages
+      }
+    }
+  }
+`;
+
+const TOGGLE_ROLE_STATUS_MUTATION = gql`
+  mutation ToggleRoleStatus($id: Int!) {
+    toggleRoleStatus(id: $id) {
+      id
+      name
+      active
+      isAdmin
+    }
+  }
+`;
+
+const DELETE_ROLE_MUTATION = gql`
+  mutation DeleteRole($id: Int!) {
+    deleteRole(id: $id)
+  }
+`;
+
+// -----------------------------------
+// TYPES
+// -----------------------------------
 
 type Group = {
   id: number;
@@ -36,7 +121,6 @@ type RoleUser = {
 type Role = {
   id: number;
   name: string;
-  level: number;
   isAdmin: boolean;
   active: boolean;
   groupId: number | null;
@@ -55,13 +139,6 @@ type Role = {
   permissions?: RolePermission[];
 };
 
-type CurrentUser = {
-  id: number;
-  name: string;
-  role?: string;
-  permissions?: string[];
-};
-
 type Pagination = {
   page: number;
   limit: number;
@@ -69,16 +146,32 @@ type Pagination = {
   totalPages: number;
 };
 
-type RolesResponse = {
-  data: Role[];
-  pagination: Pagination;
+type RolesQueryData = {
+  roles: {
+    data: Role[];
+    pagination: Pagination;
+  };
 };
+
+type RolesQueryVariables = {
+  page?: number;
+  limit?: number;
+  search?: string;
+};
+
+type CurrentUser = {
+  id: number;
+  name: string;
+  role?: string;
+  permissions?: string[];
+};
+
+// -----------------------------------
+// PAGE
+// -----------------------------------
 
 export default function RolesPage() {
   const router = useRouter();
-
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [groups, setGroups] = useState<Group[]>([]);
 
   const [currentUser, setCurrentUser] =
     useState<CurrentUser | null>(null);
@@ -134,6 +227,115 @@ export default function RolesPage() {
     );
 
   // -----------------------------------
+  // AUTH / INITIAL DATA
+  // -----------------------------------
+
+  useEffect(() => {
+    const token =
+      localStorage.getItem("token");
+
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    const user =
+      getUser() as CurrentUser | null;
+
+    setCurrentUser(user);
+
+    const successMessage =
+      sessionStorage.getItem(
+        "rolesSuccessMessage",
+      );
+
+    if (successMessage) {
+      setSuccess(successMessage);
+
+      sessionStorage.removeItem(
+        "rolesSuccessMessage",
+      );
+    }
+  }, [router]);
+
+  // -----------------------------------
+  // ROLES QUERY
+  // -----------------------------------
+
+  const {
+    data,
+    loading: queryLoading,
+    error: queryError,
+    refetch,
+  } = useQuery<
+    RolesQueryData,
+    RolesQueryVariables
+  >(ROLES_QUERY, {
+    variables: {
+      page: 1,
+      limit: 10,
+      search: "",
+    },
+    fetchPolicy: "network-only",
+  });
+
+  // -----------------------------------
+  // TOGGLE STATUS
+  // -----------------------------------
+
+  const [
+    toggleRoleStatusMutation,
+  ] = useMutation(
+    TOGGLE_ROLE_STATUS_MUTATION,
+  );
+
+  // -----------------------------------
+  // DELETE
+  // -----------------------------------
+
+  const [
+    deleteRoleMutation,
+  ] = useMutation(
+    DELETE_ROLE_MUTATION,
+  );
+
+  // -----------------------------------
+  // SYNC QUERY STATE
+  // -----------------------------------
+
+  useEffect(() => {
+    if (!data?.roles) {
+      return;
+    }
+
+    setPagination(
+      data.roles.pagination,
+    );
+  }, [data]);
+
+  useEffect(() => {
+    if (queryLoading) {
+      return;
+    }
+
+    setLoading(false);
+  }, [queryLoading]);
+
+  useEffect(() => {
+    if (!queryError) {
+      return;
+    }
+
+    setError(
+      queryError.message ||
+        "Unable to load roles.",
+    );
+
+    setLoading(false);
+    setPageLoading(false);
+  }, [queryError]);
+
+  // -----------------------------------
   // CLEAN UP SEARCH TIMER
   // -----------------------------------
 
@@ -169,132 +371,11 @@ export default function RolesPage() {
   }, [success]);
 
   // -----------------------------------
-  // LOAD ROLES
+  // ROLES
   // -----------------------------------
 
-  async function loadRoles(
-    page: number,
-    searchQuery = search,
-    showInitialLoading = false,
-  ) {
-    try {
-      if (showInitialLoading) {
-        setLoading(true);
-      } else {
-        setPageLoading(true);
-      }
-
-      setError("");
-
-      const response =
-        await api.get<RolesResponse>(
-          "/roles",
-          {
-            params: {
-              page,
-              limit: 10,
-              search:
-                searchQuery.trim(),
-            },
-          },
-        );
-
-      const roleList =
-        Array.isArray(
-          response.data?.data,
-        )
-          ? response.data.data
-          : [];
-
-      setRoles(roleList);
-
-      setPagination(
-        response.data.pagination,
-      );
-    } catch (err: any) {
-      if (
-        err?.response?.status === 401
-      ) {
-        router.replace("/login");
-        return;
-      }
-
-      setError(
-        err?.response?.data?.message ||
-          "Unable to load roles.",
-      );
-    } finally {
-      if (showInitialLoading) {
-        setLoading(false);
-      } else {
-        setPageLoading(false);
-      }
-    }
-  }
-
-  // -----------------------------------
-  // LOAD DATA
-  // -----------------------------------
-
-  useEffect(() => {
-    const token =
-      localStorage.getItem("token");
-
-    if (!token) {
-      router.replace("/login");
-      return;
-    }
-
-    const user =
-      getUser() as CurrentUser | null;
-
-    setCurrentUser(user);
-
-    const successMessage =
-      sessionStorage.getItem(
-        "rolesSuccessMessage",
-      );
-
-    if (successMessage) {
-      setSuccess(successMessage);
-
-      sessionStorage.removeItem(
-        "rolesSuccessMessage",
-      );
-    }
-
-    async function loadGroups() {
-      try {
-        const groupsResponse =
-          await api.get<Group[]>(
-            "/roles/groups",
-          );
-
-        setGroups(
-          Array.isArray(
-            groupsResponse.data,
-          )
-            ? groupsResponse.data
-            : [],
-        );
-      } catch {
-        setGroups([]);
-      }
-    }
-
-    async function loadInitialData() {
-      await Promise.all([
-        loadRoles(
-          1,
-          "",
-          true,
-        ),
-        loadGroups(),
-      ]);
-    }
-
-    loadInitialData();
-  }, [router]);
+  const roles =
+    data?.roles?.data || [];
 
   // -----------------------------------
   // PERMISSIONS
@@ -342,15 +423,6 @@ export default function RolesPage() {
       return role.group.name;
     }
 
-    if (role.groupId !== null) {
-      return (
-        groups.find(
-          (group) =>
-            group.id === role.groupId,
-        )?.name || "Unassigned"
-      );
-    }
-
     return "Unassigned";
   }
 
@@ -385,11 +457,31 @@ export default function RolesPage() {
     }
 
     searchTimer.current =
-      setTimeout(() => {
-        loadRoles(
-          1,
-          value,
-        );
+      setTimeout(async () => {
+        try {
+          setPageLoading(true);
+          setError("");
+
+          const result =
+            await refetch({
+              page: 1,
+              limit: 10,
+              search: value.trim(),
+            });
+
+          if (result.data?.roles) {
+  setPagination(
+    result.data.roles.pagination,
+  );
+}
+        } catch (err: any) {
+          setError(
+            err?.message ||
+              "Unable to load roles.",
+          );
+        } finally {
+          setPageLoading(false);
+        }
       }, 300);
 
     window.scrollTo({
@@ -425,10 +517,30 @@ export default function RolesPage() {
       behavior: "smooth",
     });
 
-    await loadRoles(
-      nextPage,
-      search,
-    );
+    try {
+      setPageLoading(true);
+      setError("");
+
+      const result =
+        await refetch({
+          page: nextPage,
+          limit: 10,
+          search: search.trim(),
+        });
+
+      if (result.data?.roles) {
+  setPagination(
+    result.data.roles.pagination,
+  );
+}
+    } catch (err: any) {
+      setError(
+        err?.message ||
+          "Unable to load roles.",
+      );
+    } finally {
+      setPageLoading(false);
+    }
   }
 
   // -----------------------------------
@@ -470,9 +582,11 @@ export default function RolesPage() {
       setError("");
       setStatusLoadingId(role.id);
 
-      await api.patch(
-        `/roles/${role.id}/status`,
-      );
+      await toggleRoleStatusMutation({
+        variables: {
+          id: role.id,
+        },
+      });
 
       setStatusOverrides((current) => ({
         ...current,
@@ -485,15 +599,8 @@ export default function RolesPage() {
           : "Role activated successfully.",
       );
     } catch (err: any) {
-      if (
-        err?.response?.status === 401
-      ) {
-        router.replace("/login");
-        return;
-      }
-
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to update role status.",
       );
     } finally {
@@ -530,9 +637,14 @@ export default function RolesPage() {
       setDeleteLoading(true);
       setError("");
 
-      await api.delete(
-        `/roles/${deleteTarget.id}`,
-      );
+      await deleteRoleMutation({
+        variables: {
+          id: deleteTarget.id,
+        },
+      });
+
+      const deletedRoleId =
+        deleteTarget.id;
 
       setDeleteTarget(null);
 
@@ -541,7 +653,7 @@ export default function RolesPage() {
           ...current,
         };
 
-        delete next[deleteTarget.id];
+        delete next[deletedRoleId];
 
         return next;
       });
@@ -576,24 +688,28 @@ export default function RolesPage() {
               newTotalPages,
             );
 
-      await loadRoles(
-        nextPage,
-        search,
-      );
-    } catch (err: any) {
-      if (
-        err?.response?.status === 401
-      ) {
-        router.replace("/login");
-        return;
-      }
+      setPageLoading(true);
 
+      const result =
+        await refetch({
+          page: nextPage,
+          limit: 10,
+          search: search.trim(),
+        });
+
+      if (result.data?.roles) {
+  setPagination(
+    result.data.roles.pagination,
+  );
+}
+    } catch (err: any) {
       setError(
-        err?.response?.data?.message ||
+        err?.message ||
           "Unable to delete role.",
       );
     } finally {
       setDeleteLoading(false);
+      setPageLoading(false);
     }
   }
 
@@ -616,8 +732,7 @@ export default function RolesPage() {
 
   /*
    * Server-side search already returns the
-   * correct current page, so no additional
-   * client-side filtering is required.
+   * correct current page.
    */
   const filteredRoles = roles;
 
@@ -973,9 +1088,7 @@ export default function RolesPage() {
                                 </div>
 
                                 <div className="company-role-level">
-                                  {role.isAdmin
-                                    ? "Administrator"
-                                    : `Level ${role.level}`}
+                                  {role.isAdmin ? "Administrator" : "Role"}
                                 </div>
                               </div>
 

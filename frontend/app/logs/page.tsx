@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { api } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+
+import { gql } from "@apollo/client";
+import { useQuery } from "@apollo/client/react";
+
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 
 type AuditLog = {
@@ -20,20 +23,84 @@ type AuditLog = {
   createdAt: string;
 };
 
-type AuditResponse = {
-  data: AuditLog[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
+type AuditPagination = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+};
+
+type AuditLogsQueryData = {
+  auditLogs: {
+    data: AuditLog[];
+    pagination: AuditPagination;
   };
 };
 
-type FilterResponse = {
-  actions: string[];
-  entities: string[];
+type AuditLogsQueryVariables = {
+  page: number;
+  limit: number;
+  search?: string;
+  action?: string;
+  entity?: string;
 };
+
+type AuditFiltersQueryData = {
+  auditLogFilters: {
+    actions: string[];
+    entities: string[];
+  };
+};
+
+const AUDIT_LOGS_QUERY = gql`
+  query AuditLogs(
+    $page: Int
+    $limit: Int
+    $search: String
+    $action: String
+    $entity: String
+  ) {
+    auditLogs(
+      page: $page
+      limit: $limit
+      search: $search
+      action: $action
+      entity: $entity
+    ) {
+      data {
+        id
+        action
+        entity
+        entityId
+        actorId
+        actorName
+        actorEmail
+        description
+        oldValues
+        newValues
+        ipAddress
+        userAgent
+        createdAt
+      }
+
+      pagination {
+        page
+        limit
+        total
+        totalPages
+      }
+    }
+  }
+`;
+
+const AUDIT_LOG_FILTERS_QUERY = gql`
+  query AuditLogFilters {
+    auditLogFilters {
+      actions
+      entities
+    }
+  }
+`;
 
 function formatDate(value: string) {
   return new Date(value).toLocaleString();
@@ -43,7 +110,9 @@ function formatAction(action: string) {
   return action
     .replace(/_/g, " ")
     .toLowerCase()
-    .replace(/\b\w/g, (char) => char.toUpperCase());
+    .replace(/\b\w/g, (char) =>
+      char.toUpperCase(),
+    );
 }
 
 function getActionClass(action: string) {
@@ -72,95 +141,119 @@ function getActionClass(action: string) {
 }
 
 export default function LogsPage() {
-  const [logs, setLogs] = useState<AuditLog[]>([]);
-  const [filters, setFilters] = useState<FilterResponse>({
-    actions: [],
-    entities: [],
-  });
-
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] =
+    useState("");
+
   const [action, setAction] = useState("");
   const [entity, setEntity] = useState("");
 
   const [page, setPage] = useState(1);
-  const [pagination, setPagination] =
-    useState<AuditResponse["pagination"] | null>(null);
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [selectedLog, setSelectedLog] =
     useState<AuditLog | null>(null);
 
-  const query = useMemo(() => {
-    const params = new URLSearchParams();
+    const searchInputRef =
+  useRef<HTMLInputElement>(null);
 
-    params.set("page", String(page));
-    params.set("limit", "20");
+const keepSearchFocusRef =
+  useRef(false);
 
-    if (search.trim()) {
-      params.set("search", search.trim());
-    }
+  /*
+   * Wait until the user stops typing before
+   * sending the search value to GraphQL.
+   */
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+    }, 400);
 
-    if (action) {
-      params.set("action", action);
-    }
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [search]);
 
-    if (entity) {
-      params.set("entity", entity);
-    }
 
-    return params.toString();
-  }, [page, search, action, entity]);
+  /*
+   * Reset pagination when the actual search
+   * value changes.
+   */
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
 
-  async function loadLogs() {
-    try {
-      setLoading(true);
-      setError("");
+  const {
+    data: filtersData,
+    error: filtersError,
+  } = useQuery<AuditFiltersQueryData>(
+    AUDIT_LOG_FILTERS_QUERY,
+    {
+      fetchPolicy: "network-only",
+    },
+  );
 
-      const response = await api.get<AuditResponse>(
-        `/audit-logs?${query}`,
-      );
+  const {
+    data,
+    loading,
+    error,
+  } = useQuery<
+    AuditLogsQueryData,
+    AuditLogsQueryVariables
+  >(AUDIT_LOGS_QUERY, {
+    variables: {
+      page,
+      limit: 20,
+      search:
+        debouncedSearch || undefined,
+      action: action || undefined,
+      entity: entity || undefined,
+    },
+    fetchPolicy: "network-only",
+  });
 
-      setLogs(response.data.data);
-      setPagination(response.data.pagination);
-    } catch (err: any) {
-      console.error(err);
+  const logs =
+    data?.auditLogs?.data || [];
 
-      setError(
-        err?.response?.data?.message ||
-          "Failed to load audit logs.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
+  const pagination =
+    data?.auditLogs?.pagination || null;
 
-  async function loadFilters() {
-    try {
-      const response = await api.get<FilterResponse>(
-        "/audit-logs/filters",
-      );
+  const filters =
+    filtersData?.auditLogFilters || {
+      actions: [],
+      entities: [],
+    };
 
-      setFilters(response.data);
-    } catch (err) {
-      console.error(
-        "Failed to load audit filters",
-        err,
-      );
-    }
-  }
+  const displayError =
+    error?.message ||
+    filtersError?.message ||
+    "";
 
   useEffect(() => {
-    loadFilters();
-  }, []);
+    if (
+      pagination &&
+      page > pagination.totalPages &&
+      pagination.totalPages > 0
+    ) {
+      setPage(pagination.totalPages);
+    }
+  }, [pagination, page]);
 
   useEffect(() => {
-    loadLogs();
-  }, [query]);
+  if (
+    loading ||
+    !keepSearchFocusRef.current
+  ) {
+    return;
+  }
 
-  // -----------------------------------
-  // CHANGE PAGE
-  // -----------------------------------
+  const frame = window.requestAnimationFrame(() => {
+    searchInputRef.current?.focus();
+  });
+
+  return () => {
+    window.cancelAnimationFrame(frame);
+  };
+}, [loading]);
 
   function changePage(
     nextPage: number,
@@ -174,15 +267,12 @@ export default function LogsPage() {
 
     if (
       nextPage < 1 ||
-      nextPage >
-        pagination.totalPages
+      nextPage > pagination.totalPages
     ) {
       return;
     }
 
-    if (
-      nextPage === page
-    ) {
+    if (nextPage === page) {
       return;
     }
 
@@ -194,12 +284,9 @@ export default function LogsPage() {
     setPage(nextPage);
   }
 
-  // -----------------------------------
-  // CLEAR FILTERS
-  // -----------------------------------
-
   function clearFilters() {
     setSearch("");
+    setDebouncedSearch("");
     setAction("");
     setEntity("");
     setPage(1);
@@ -210,16 +297,19 @@ export default function LogsPage() {
     });
   }
 
-  const createdCount = logs.filter((log) =>
-    log.action.includes("CREATED"),
+  const createdCount = logs.filter(
+    (log) =>
+      log.action.includes("CREATED"),
   ).length;
 
-  const changedCount = logs.filter((log) =>
-    log.action.includes("CHANGED"),
+  const changedCount = logs.filter(
+    (log) =>
+      log.action.includes("CHANGED"),
   ).length;
 
-  const deletedCount = logs.filter((log) =>
-    log.action.includes("DELETED"),
+  const deletedCount = logs.filter(
+    (log) =>
+      log.action.includes("DELETED"),
   ).length;
 
   /*
@@ -281,9 +371,9 @@ export default function LogsPage() {
         {/* ERROR */}
         {/* -------------------------------- */}
 
-        {error && (
+        {displayError && (
           <div className="company-users-error">
-            {error}
+            {displayError}
           </div>
         )}
 
@@ -295,6 +385,7 @@ export default function LogsPage() {
 
           <div className="stat-card stat-card-total">
             <div className="stat-card-content">
+
               <span className="stat-card-label">
                 Total
               </span>
@@ -306,11 +397,13 @@ export default function LogsPage() {
               <span className="stat-card-description">
                 Recorded audit events
               </span>
+
             </div>
           </div>
 
           <div className="stat-card stat-card-active">
             <div className="stat-card-content">
+
               <span className="stat-card-label">
                 Created
               </span>
@@ -322,11 +415,13 @@ export default function LogsPage() {
               <span className="stat-card-description">
                 Events on this page
               </span>
+
             </div>
           </div>
 
           <div className="stat-card stat-card-inactive">
             <div className="stat-card-content">
+
               <span className="stat-card-label">
                 Changed
               </span>
@@ -338,11 +433,13 @@ export default function LogsPage() {
               <span className="stat-card-description">
                 Events on this page
               </span>
+
             </div>
           </div>
 
           <div className="stat-card stat-card-total">
             <div className="stat-card-content">
+
               <span className="stat-card-label">
                 Deleted
               </span>
@@ -354,6 +451,7 @@ export default function LogsPage() {
               <span className="stat-card-description">
                 Events on this page
               </span>
+
             </div>
           </div>
 
@@ -368,6 +466,7 @@ export default function LogsPage() {
           {/* PANEL HEADER */}
 
           <div className="company-users-panel-header company-logs-panel-header">
+
             <div>
               <div className="company-page-eyebrow">
                 ACTIVITY HISTORY
@@ -389,17 +488,24 @@ export default function LogsPage() {
             <div className="company-logs-filters">
 
               <div className="company-users-search company-logs-search">
+
                 <span className="company-users-search-icon">
                   ⌕
                 </span>
 
                 <input
+                  ref={searchInputRef}
                   type="text"
                   placeholder="Search activity..."
                   value={search}
+                  onFocus={() => {
+                    keepSearchFocusRef.current = true;
+                  }}
+                  onBlur={() => {
+                    keepSearchFocusRef.current = false;
+                  }}
                   onChange={(event) => {
                     setSearch(event.target.value);
-                    setPage(1);
 
                     window.scrollTo({
                       top: 0,
@@ -412,27 +518,34 @@ export default function LogsPage() {
                   <button
                     type="button"
                     className="company-users-search-clear"
-                    onClick={() => {
-                      setSearch("");
-                      setPage(1);
+                   onClick={() => {
+                  setSearch("");
+                  setDebouncedSearch("");
+                  setPage(1);
 
-                      window.scrollTo({
-                        top: 0,
-                        behavior: "smooth",
-                      });
-                    }}
+                  keepSearchFocusRef.current = true;
+
+                  window.scrollTo({
+                    top: 0,
+                    behavior: "smooth",
+                  });
+                }}
                     aria-label="Clear search"
                   >
                     ×
                   </button>
                 )}
+
               </div>
 
               <select
                 className="company-logs-select"
                 value={action}
                 onChange={(event) => {
-                  setAction(event.target.value);
+                  setAction(
+                    event.target.value,
+                  );
+
                   setPage(1);
 
                   window.scrollTo({
@@ -445,21 +558,26 @@ export default function LogsPage() {
                   All Actions
                 </option>
 
-                {filters.actions.map((item) => (
-                  <option
-                    key={item}
-                    value={item}
-                  >
-                    {formatAction(item)}
-                  </option>
-                ))}
+                {filters.actions.map(
+                  (item) => (
+                    <option
+                      key={item}
+                      value={item}
+                    >
+                      {formatAction(item)}
+                    </option>
+                  ),
+                )}
               </select>
 
               <select
                 className="company-logs-select"
                 value={entity}
                 onChange={(event) => {
-                  setEntity(event.target.value);
+                  setEntity(
+                    event.target.value,
+                  );
+
                   setPage(1);
 
                   window.scrollTo({
@@ -472,21 +590,27 @@ export default function LogsPage() {
                   All Entities
                 </option>
 
-                {filters.entities.map((item) => (
-                  <option
-                    key={item}
-                    value={item}
-                  >
-                    {item}
-                  </option>
-                ))}
+                {filters.entities.map(
+                  (item) => (
+                    <option
+                      key={item}
+                      value={item}
+                    >
+                      {item}
+                    </option>
+                  ),
+                )}
               </select>
 
-              {(search || action || entity) && (
+              {(search ||
+                action ||
+                entity) && (
                 <button
                   type="button"
                   className="company-secondary-button company-logs-clear"
-                  onClick={clearFilters}
+                  onClick={
+                    clearFilters
+                  }
                 >
                   Clear
                 </button>
@@ -499,8 +623,10 @@ export default function LogsPage() {
           {/* EMPTY */}
           {/* -------------------------------- */}
 
-          {!loading && logs.length === 0 ? (
+          {!loading &&
+          logs.length === 0 ? (
             <div className="company-users-empty">
+
               <div className="company-users-empty-icon">
                 ◷
               </div>
@@ -510,20 +636,27 @@ export default function LogsPage() {
               </h3>
 
               <p>
-                {search || action || entity
+                {search ||
+                action ||
+                entity
                   ? "Try changing your filters."
                   : "There are no audit events to display."}
               </p>
 
-              {(search || action || entity) && (
+              {(search ||
+                action ||
+                entity) && (
                 <button
                   type="button"
                   className="company-primary-button"
-                  onClick={clearFilters}
+                  onClick={
+                    clearFilters
+                  }
                 >
                   Clear filters
                 </button>
               )}
+
             </div>
           ) : (
             <>
@@ -533,6 +666,7 @@ export default function LogsPage() {
               {/* -------------------------------- */}
 
               <div className="company-users-table-wrapper company-logs-table-wrapper">
+
                 <table className="company-users-table company-logs-table">
 
                   <thead>
@@ -564,96 +698,114 @@ export default function LogsPage() {
                   </thead>
 
                   <tbody>
-                    {logs.map((log) => (
-                      <tr
-                        key={log.id}
-                        className="company-log-row"
-                        onClick={() =>
-                          setSelectedLog(log)
-                        }
-                      >
 
-                        <td>
-                          <div className="company-log-date">
-                            {formatDate(
-                              log.createdAt,
-                            )}
-                          </div>
-                        </td>
+                    {logs.map(
+                      (log) => (
+                        <tr
+                          key={log.id}
+                          className="company-log-row"
+                          onClick={() =>
+                            setSelectedLog(
+                              log,
+                            )
+                          }
+                        >
 
-                        <td>
-                          <div className="company-log-actor">
-
-                            <div className="company-log-avatar">
-                              {(
-                                log.actorName ||
-                                "S"
-                              )
-                                .charAt(0)
-                                .toUpperCase()}
-                            </div>
-
-                            <div>
-                              <div className="company-log-actor-name">
-                                {log.actorName ||
-                                  "System"}
-                              </div>
-
-                              {log.actorEmail && (
-                                <div className="company-log-actor-email">
-                                  {log.actorEmail}
-                                </div>
+                          <td>
+                            <div className="company-log-date">
+                              {formatDate(
+                                log.createdAt,
                               )}
                             </div>
+                          </td>
 
-                          </div>
-                        </td>
+                          <td>
+                            <div className="company-log-actor">
 
-                        <td>
-                          <span
-                            className={getActionClass(
-                              log.action,
-                            )}
-                          >
-                            {formatAction(
-                              log.action,
-                            )}
-                          </span>
-                        </td>
+                              <div className="company-log-avatar">
+                                {(
+                                  log.actorName ||
+                                  "S"
+                                )
+                                  .charAt(0)
+                                  .toUpperCase()}
+                              </div>
 
-                        <td>
-                          <div className="company-log-entity">
+                              <div>
 
-                            <strong>
-                              {log.entity}
-                            </strong>
+                                <div className="company-log-actor-name">
+                                  {log.actorName ||
+                                    "System"}
+                                </div>
 
-                            {log.entityId !== null && (
-                              <span>
-                                #{log.entityId}
-                              </span>
-                            )}
+                                {log.actorEmail && (
+                                  <div className="company-log-actor-email">
+                                    {
+                                      log.actorEmail
+                                    }
+                                  </div>
+                                )}
 
-                          </div>
-                        </td>
+                              </div>
 
-                        <td>
-                          <div className="company-log-description">
-                            {log.description}
-                          </div>
-                        </td>
+                            </div>
+                          </td>
 
-                        <td>
-                          <span className="company-log-ip">
-                            {log.ipAddress || "—"}
-                          </span>
-                        </td>
+                          <td>
+                            <span
+                              className={getActionClass(
+                                log.action,
+                              )}
+                            >
+                              {formatAction(
+                                log.action,
+                              )}
+                            </span>
+                          </td>
 
-                      </tr>
-                    ))}
+                          <td>
+                            <div className="company-log-entity">
+
+                              <strong>
+                                {log.entity}
+                              </strong>
+
+                              {log.entityId !==
+                                null && (
+                                <span>
+                                  #
+                                  {
+                                    log.entityId
+                                  }
+                                </span>
+                              )}
+
+                            </div>
+                          </td>
+
+                          <td>
+                            <div className="company-log-description">
+                              {
+                                log.description
+                              }
+                            </div>
+                          </td>
+
+                          <td>
+                            <span className="company-log-ip">
+                              {log.ipAddress ||
+                                "—"}
+                            </span>
+                          </td>
+
+                        </tr>
+                      ),
+                    )}
+
                   </tbody>
 
                 </table>
+
               </div>
 
               {/* -------------------------------- */}
@@ -664,12 +816,15 @@ export default function LogsPage() {
                 <div className="company-logs-pagination">
 
                   <div className="company-logs-pagination-info">
-                    {pagination.total === 0 ? (
+
+                    {pagination.total ===
+                    0 ? (
                       "No events"
                     ) : (
                       <>
                         Showing{" "}
-                        {(pagination.page - 1) *
+                        {(pagination.page -
+                          1) *
                           pagination.limit +
                           1}{" "}
                         –{" "}
@@ -682,6 +837,7 @@ export default function LogsPage() {
                         {pagination.total}
                       </>
                     )}
+
                   </div>
 
                   <div className="company-logs-pagination-controls">
@@ -705,7 +861,8 @@ export default function LogsPage() {
                       Page{" "}
                       {pagination.page}{" "}
                       of{" "}
-                      {pagination.totalPages || 1}
+                      {pagination.totalPages ||
+                        1}
                     </span>
 
                     <button
@@ -725,6 +882,7 @@ export default function LogsPage() {
                     </button>
 
                   </div>
+
                 </div>
               )}
 
@@ -755,8 +913,10 @@ export default function LogsPage() {
               <div className="company-log-modal-header">
 
                 <div>
+
                   <div className="company-page-eyebrow">
-                    AUDIT EVENT #{selectedLog.id}
+                    AUDIT EVENT #
+                    {selectedLog.id}
                   </div>
 
                   <h2>
@@ -764,6 +924,7 @@ export default function LogsPage() {
                       selectedLog.action,
                     )}
                   </h2>
+
                 </div>
 
                 <button
@@ -893,6 +1054,7 @@ export default function LogsPage() {
               </div>
 
             </div>
+
           </div>
         )}
 

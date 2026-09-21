@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import { api } from "@/lib/api";
+import { gql } from "@apollo/client";
+import { useQuery } from "@apollo/client/react";
+
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import RoleForm from "../../components/RoleForm";
 
@@ -26,59 +28,96 @@ type Role = {
   }[];
 };
 
+type RoleQueryData = {
+  role: Role;
+};
+
+type RoleQueryVariables = {
+  id: number;
+};
+
+const ROLE_QUERY = gql`
+  query Role($id: Int!) {
+    role(id: $id) {
+      id
+      name
+      active
+      isAdmin
+      groupId
+      reportsToRoleId
+      permissions {
+        permission {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
+
 export default function EditRolePage() {
   const router = useRouter();
   const params = useParams();
 
-  const roleId = params.id;
+  const roleId = Number(params.id);
 
-  const [role, setRole] = useState<Role | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const {
+    data,
+    loading,
+    error: queryError,
+  } = useQuery<
+    RoleQueryData,
+    RoleQueryVariables
+  >(ROLE_QUERY, {
+    variables: {
+      id: roleId,
+    },
+    skip: !Number.isInteger(roleId),
+    fetchPolicy: "network-only",
+  });
+
+  const role = data?.role ?? null;
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
+    const token =
+      localStorage.getItem("token");
 
     if (!token) {
+      router.replace("/login");
+    }
+  }, [router]);
+
+  useEffect(() => {
+    if (!queryError) {
+      return;
+    }
+
+    const message =
+      queryError.message || "";
+
+    if (
+      message.toLowerCase().includes(
+        "unauthorized",
+      ) ||
+      message.toLowerCase().includes(
+        "unauthenticated",
+      )
+    ) {
       router.replace("/login");
       return;
     }
 
-    loadRole();
-  }, [router, roleId]);
-
-  async function loadRole() {
-    try {
-      setLoading(true);
-      setError("");
-
-      const response = await api.get(`/roles/${roleId}`);
-
-      setRole(response.data);
-    } catch (err: any) {
-      if (err?.response?.status === 401) {
-        router.replace("/login");
-        return;
-      }
-
-      if (err?.response?.status === 403) {
-        router.replace("/dashboard");
-        return;
-      }
-
-      if (err?.response?.status === 404) {
-        setError("Role not found.");
-        return;
-      }
-
-      setError(
-        err?.response?.data?.message ||
-          "Unable to load role.",
-      );
-    } finally {
-      setLoading(false);
+    if (
+      message.toLowerCase().includes(
+        "forbidden",
+      ) ||
+      message.toLowerCase().includes(
+        "not allowed",
+      )
+    ) {
+      router.replace("/dashboard");
     }
-  }
+  }, [queryError, router]);
 
   function handleSuccess(message: string) {
     sessionStorage.setItem(
@@ -122,16 +161,19 @@ export default function EditRolePage() {
               <button
                 type="button"
                 className="company-secondary-button"
-                onClick={() => router.push("/roles")}
+                onClick={() =>
+                  router.push("/roles")
+                }
               >
                 ← Back to roles
               </button>
             </div>
           </div>
 
-          {error && (
+          {queryError && (
             <div className="company-users-error">
-              {error}
+              {queryError.message ||
+                "Unable to load role."}
             </div>
           )}
         </div>
@@ -161,16 +203,18 @@ export default function EditRolePage() {
             <button
               type="button"
               className="company-secondary-button"
-              onClick={() => router.push("/roles")}
+              onClick={() =>
+                router.push("/roles")
+              }
             >
               ← Back to roles
             </button>
           </div>
         </div>
 
-        {error && (
+        {queryError && (
           <div className="company-users-error">
-            {error}
+            {queryError.message}
           </div>
         )}
 

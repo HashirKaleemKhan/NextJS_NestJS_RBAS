@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { gql } from "@apollo/client";
+import { useQuery } from "@apollo/client/react";
+
 import { getUser } from "@/lib/auth";
-import { api } from "@/lib/api";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 
 type CurrentUser = {
@@ -20,16 +22,16 @@ type User = {
   name: string;
   email: string;
   createdAt: string;
+  active: boolean;
   role?: {
     name: string;
     active: boolean;
-  };
+  } | null;
 };
 
 type Role = {
   id: number;
   name: string;
-  level: number;
   isAdmin: boolean;
   active: boolean;
   permissions?: {
@@ -46,31 +48,134 @@ type Group = {
   active: boolean;
 };
 
-type UsersResponse = {
-  data: User[];
-  pagination?: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
-};
-
-type RolesResponse = {
-  data: Role[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
-};
-
-type GroupsResponse =
-  | Group[]
-  | {
-      data: Group[];
+type UsersQueryData = {
+  users: {
+    data: User[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
     };
+  };
+};
+
+type RolesQueryData = {
+  roles: {
+    data: Role[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+    };
+  };
+};
+
+type GroupsQueryData = {
+  groups: {
+    data: Group[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+    };
+  };
+};
+
+const USERS_QUERY = gql`
+  query DashboardUsers(
+    $page: Int
+    $limit: Int
+  ) {
+    users(
+      page: $page
+      limit: $limit
+      search: ""
+    ) {
+      data {
+        id
+        name
+        email
+        createdAt
+        active
+
+        role {
+          name
+          active
+        }
+      }
+
+      pagination {
+        page
+        limit
+        total
+        totalPages
+      }
+    }
+  }
+`;
+
+const ROLES_QUERY = gql`
+  query DashboardRoles(
+    $page: Int
+    $limit: Int
+  ) {
+    roles(
+      page: $page
+      limit: $limit
+      search: ""
+    ) {
+      data {
+        id
+        name
+        isAdmin
+        active
+
+        permissions {
+          permission {
+            id
+            name
+          }
+        }
+      }
+
+      pagination {
+        page
+        limit
+        total
+        totalPages
+      }
+    }
+  }
+`;
+
+const GROUPS_QUERY = gql`
+  query DashboardGroups(
+    $page: Int
+    $limit: Int
+  ) {
+    groups(
+      page: $page
+      limit: $limit
+      search: ""
+    ) {
+      data {
+        id
+        name
+        active
+      }
+
+      pagination {
+        page
+        limit
+        total
+        totalPages
+      }
+    }
+  }
+`;
 
 function StatCard({
   icon,
@@ -178,207 +283,325 @@ export default function Dashboard() {
   const [loading, setLoading] =
     useState(true);
 
+  const [canReadUsers, setCanReadUsers] =
+    useState(false);
+
+  const [canManageRoles, setCanManageRoles] =
+    useState(false);
+
+  const [authorized, setAuthorized] =
+    useState(false);
+
+  /*
+   * Read the current JWT user and determine
+   * which dashboard data the current user
+   * is allowed to request.
+   */
   useEffect(() => {
-    const loadDashboard = async () => {
-      const token =
-        localStorage.getItem("token");
+    const token =
+      localStorage.getItem("token");
 
-      if (!token) {
-        router.replace("/login");
-        return;
-      }
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
 
-      const currentUser: any = getUser();
+    const currentUser =
+      getUser() as CurrentUser | null;
 
-      const permissions: string[] =
-        currentUser?.permissions || [];
+    const permissions: string[] =
+      currentUser?.permissions || [];
 
+    if (
+      !permissions.includes(
+        "dashboard.view",
+      )
+    ) {
       if (
-        !permissions.includes(
-          "dashboard.view",
+        permissions.includes(
+          "users.read",
         )
       ) {
-        if (
-          permissions.includes(
-            "users.read",
-          )
-        ) {
-          router.replace("/users");
-          return;
-        }
-
-        if (
-          permissions.includes(
-            "roles.manage",
-          )
-        ) {
-          router.replace("/roles");
-          return;
-        }
-
-        router.replace(
-          "/access-denied",
-        );
-
+        router.replace("/users");
         return;
       }
 
-      setUser(currentUser);
-
-      try {
-        // -----------------------------------
-        // USERS
-        // -----------------------------------
-
-        if (
-          permissions.includes(
-            "users.read",
-          )
-        ) {
-          const usersResponse =
-            await api.get<UsersResponse>(
-              "/users",
-              {
-                params: {
-                  page: 1,
-                  limit: 100,
-                },
-              },
-            );
-
-          const response =
-            usersResponse.data;
-
-          const userList =
-            Array.isArray(response)
-              ? response
-              : Array.isArray(
-                    response?.data,
-                  )
-                ? response.data
-                : [];
-
-          setUsers(userList);
-
-          /*
-           * Use backend total when available.
-           * This keeps dashboard totals correct
-           * even when the users endpoint is
-           * paginated.
-           */
-          setTotalUsers(
-            response?.pagination?.total ??
-              userList.length,
-          );
-        }
-
-        // -----------------------------------
-        // ROLES
-        // -----------------------------------
-
-        if (
-          permissions.includes(
-            "roles.manage",
-          )
-        ) {
-          const rolesResponse =
-            await api.get<RolesResponse>(
-              "/roles",
-              {
-                params: {
-                  page: 1,
-                  limit: 100,
-                },
-              },
-            );
-
-          const response =
-            rolesResponse.data;
-
-          const roleList =
-            Array.isArray(response)
-              ? response
-              : Array.isArray(
-                    response?.data,
-                  )
-                ? response.data
-                : [];
-
-          setRoles(roleList);
-
-          /*
-           * The Roles endpoint is now
-           * server-side paginated.
-           *
-           * Requesting 100 roles gives the
-           * dashboard enough data for its
-           * current statistics while the
-           * backend still provides the true
-           * total count.
-           */
-          setTotalRoles(
-            response?.pagination?.total ??
-              roleList.length,
-          );
-
-          // -----------------------------------
-          // GROUPS
-          // -----------------------------------
-
-          const groupsResponse =
-            await api.get<GroupsResponse>(
-              "/groups",
-            );
-
-          const groupsData =
-            groupsResponse.data;
-
-          const groupList =
-            Array.isArray(groupsData)
-              ? groupsData
-              : Array.isArray(
-                    groupsData?.data,
-                  )
-                ? groupsData.data
-                : [];
-
-          setGroups(groupList);
-
-          setTotalGroups(
-            groupList.length,
-          );
-        }
-      } catch (error: any) {
-        if (
-          error?.response?.status ===
-          401
-        ) {
-          router.replace("/login");
-          return;
-        }
-
-        if (
-          error?.response?.status ===
-          403
-        ) {
-          router.replace(
-            "/access-denied",
-          );
-
-          return;
-        }
-
-        console.error(
-          "Dashboard loading failed:",
-          error,
-        );
-      } finally {
-        setLoading(false);
+      if (
+        permissions.includes(
+          "roles.manage",
+        )
+      ) {
+        router.replace("/roles");
+        return;
       }
-    };
 
-    loadDashboard();
+      router.replace(
+        "/access-denied",
+      );
+
+      return;
+    }
+
+    setUser(currentUser);
+
+    setCanReadUsers(
+      permissions.includes(
+        "users.read",
+      ),
+    );
+
+    setCanManageRoles(
+      permissions.includes(
+        "roles.manage",
+      ),
+    );
+
+    setAuthorized(true);
   }, [router]);
+
+  /*
+   * USERS
+   *
+   * Only execute this query when the
+   * current user has users.read.
+   */
+  const {
+    data: usersData,
+    loading: usersLoading,
+    error: usersError,
+  } = useQuery<UsersQueryData>(
+    USERS_QUERY,
+    {
+      variables: {
+        page: 1,
+        limit: 100,
+      },
+      skip:
+        !authorized ||
+        !canReadUsers,
+      fetchPolicy: "network-only",
+    },
+  );
+
+  /*
+   * ROLES
+   *
+   * Only execute when the current user
+   * has roles.manage.
+   */
+  const {
+    data: rolesData,
+    loading: rolesLoading,
+    error: rolesError,
+  } = useQuery<RolesQueryData>(
+    ROLES_QUERY,
+    {
+      variables: {
+        page: 1,
+        limit: 100,
+      },
+      skip:
+        !authorized ||
+        !canManageRoles,
+      fetchPolicy: "network-only",
+    },
+  );
+
+  /*
+   * GROUPS
+   *
+   * The existing dashboard only requested
+   * groups when roles.manage was available,
+   * so preserve that behavior.
+   */
+  const {
+    data: groupsData,
+    loading: groupsLoading,
+    error: groupsError,
+  } = useQuery<GroupsQueryData>(
+    GROUPS_QUERY,
+    {
+      variables: {
+        page: 1,
+        limit: 100,
+      },
+      skip:
+        !authorized ||
+        !canManageRoles,
+      fetchPolicy: "network-only",
+    },
+  );
+
+  /*
+   * Apply GraphQL results to the existing
+   * dashboard state.
+   */
+  useEffect(() => {
+    if (!authorized) {
+      return;
+    }
+
+    if (canReadUsers) {
+      const userResult =
+        usersData?.users;
+
+      setUsers(
+        userResult?.data || [],
+      );
+
+      setTotalUsers(
+        userResult?.pagination?.total ??
+          userResult?.data?.length ??
+          0,
+      );
+    } else {
+      setUsers([]);
+      setTotalUsers(0);
+    }
+  }, [
+    authorized,
+    canReadUsers,
+    usersData,
+  ]);
+
+  useEffect(() => {
+    if (!authorized) {
+      return;
+    }
+
+    if (canManageRoles) {
+      const roleResult =
+        rolesData?.roles;
+
+      setRoles(
+        roleResult?.data || [],
+      );
+
+      setTotalRoles(
+        roleResult?.pagination?.total ??
+          roleResult?.data?.length ??
+          0,
+      );
+    } else {
+      setRoles([]);
+      setTotalRoles(0);
+    }
+  }, [
+    authorized,
+    canManageRoles,
+    rolesData,
+  ]);
+
+  useEffect(() => {
+    if (!authorized) {
+      return;
+    }
+
+    if (canManageRoles) {
+      const groupResult =
+        groupsData?.groups;
+
+      setGroups(
+        groupResult?.data || [],
+      );
+
+      setTotalGroups(
+        groupResult?.pagination?.total ??
+          groupResult?.data?.length ??
+          0,
+      );
+    } else {
+      setGroups([]);
+      setTotalGroups(0);
+    }
+  }, [
+    authorized,
+    canManageRoles,
+    groupsData,
+  ]);
+
+  /*
+   * Authentication / authorization errors.
+   */
+  useEffect(() => {
+    const error =
+      usersError ||
+      rolesError ||
+      groupsError;
+
+    if (!error) {
+      return;
+    }
+
+    const message =
+      error.message || "";
+
+    if (
+      message.includes(
+        "Unauthorized",
+      ) ||
+      message.includes(
+        "Authentication",
+      ) ||
+      message.includes(
+        "jwt",
+      )
+    ) {
+      router.replace("/login");
+      return;
+    }
+
+    if (
+      message.includes(
+        "Forbidden",
+      ) ||
+      message.includes(
+        "permission",
+      )
+    ) {
+      router.replace(
+        "/access-denied",
+      );
+    }
+  }, [
+    usersError,
+    rolesError,
+    groupsError,
+    router,
+  ]);
+
+  useEffect(() => {
+    if (!authorized) {
+      return;
+    }
+
+    const usersDone =
+      !canReadUsers ||
+      !usersLoading;
+
+    const rolesDone =
+      !canManageRoles ||
+      !rolesLoading;
+
+    const groupsDone =
+      !canManageRoles ||
+      !groupsLoading;
+
+    if (
+      usersDone &&
+      rolesDone &&
+      groupsDone
+    ) {
+      setLoading(false);
+    }
+  }, [
+    authorized,
+    canReadUsers,
+    canManageRoles,
+    usersLoading,
+    rolesLoading,
+    groupsLoading,
+  ]);
 
   if (loading) {
     return (
@@ -390,11 +613,10 @@ export default function Dashboard() {
     );
   }
 
-  const activeUsers =
-    users.filter(
-      (item) =>
-        item.role?.active === true,
-    ).length;
+   const activeUsers =
+  users.filter(
+    (item) => item.active === true,
+  ).length;
 
   const activeRoles =
     roles.filter(
